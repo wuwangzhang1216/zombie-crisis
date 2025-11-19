@@ -1,18 +1,33 @@
+
 import React, { useRef, useEffect, useState } from 'react';
-import { LevelConfig, Entity, Bullet, Particle, WeaponType, Item, ItemType } from '../types';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, PLAYER_SPEED, PLAYER_RADIUS, PLAYER_MAX_HP, WEAPON_STATS, ENEMY_STATS, ITEM_STATS } from '../constants';
+import { LevelConfig, Entity, Bullet, Particle, WeaponType, Item, ItemType, GameSettings } from '../types';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, PLAYER_SPEED, PLAYER_RADIUS, PLAYER_MAX_HP, WEAPON_STATS, ENEMY_STATS, ITEM_STATS, DIFFICULTY_MODIFIERS } from '../constants';
 import { soundSystem } from '../services/SoundSystem';
-import { Pause, Zap, Heart, Radiation } from 'lucide-react';
+import { Pause, Zap, Heart, Radiation, Skull } from 'lucide-react';
 
 interface GameEngineProps {
   level: LevelConfig;
+  settings: GameSettings;
   onGameOver: (score: number, reason: 'victory' | 'defeat') => void;
 }
 
-const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
+interface AmmoState {
+  [key: string]: { clip: number; reserve: number };
+}
+
+const TOTAL_WAVES = 5;
+
+const GameEngine: React.FC<GameEngineProps> = ({ level, settings, onGameOver }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  // Game State Refs (Mutable for performance loop)
+  const unlockedWeapons = [WeaponType.PISTOL];
+  if (level.id >= 2) unlockedWeapons.push(WeaponType.SHOTGUN);
+  if (level.id >= 3) unlockedWeapons.push(WeaponType.FLAMETHROWER);
+
+  // Difficulty Multipliers
+  const diffMod = DIFFICULTY_MODIFIERS[settings.difficulty];
+
+  // Game State Refs
   const playerRef = useRef<Entity>({
     id: 'player',
     x: CANVAS_WIDTH / 2,
@@ -30,27 +45,68 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
   const particlesRef = useRef<Particle[]>([]);
   const itemsRef = useRef<Item[]>([]);
   
+  // Logic Refs
   const keysRef = useRef<Set<string>>(new Set());
   const mouseRef = useRef<{x: number, y: number}>({ x: 0, y: 0 });
   const frameRef = useRef<number>(0);
   const lastShotTimeRef = useRef<number>(0);
   const spawnTimerRef = useRef<number>(0);
-  const enemiesSpawnedRef = useRef<number>(0);
   const scoreRef = useRef<number>(0);
   const isMouseDownRef = useRef<boolean>(false);
   const shakeRef = useRef<number>(0);
-  const rapidFireTimerRef = useRef<number>(0); // > 0 means active
+  const rapidFireTimerRef = useRef<number>(0);
+  
+  // Wave Logic Refs
+  const waveRef = useRef<number>(1);
+  const enemiesToSpawnRef = useRef<number>(0);
+  const waveStateRef = useRef<'SPAWNING' | 'CLEARING' | 'INTERMISSION'>('INTERMISSION');
+  const intermissionTimerRef = useRef<number>(180); // 3 seconds start delay
+  
+  // Weapon & Ammo Refs
+  const currentWeaponRef = useRef<WeaponType>(WeaponType.PISTOL);
+  const ammoRef = useRef<AmmoState>({
+    [WeaponType.PISTOL]: { clip: WEAPON_STATS[WeaponType.PISTOL].clipSize, reserve: WEAPON_STATS[WeaponType.PISTOL].maxReserve },
+    [WeaponType.SHOTGUN]: { clip: WEAPON_STATS[WeaponType.SHOTGUN].clipSize, reserve: WEAPON_STATS[WeaponType.SHOTGUN].maxReserve },
+    [WeaponType.FLAMETHROWER]: { clip: WEAPON_STATS[WeaponType.FLAMETHROWER].clipSize, reserve: WEAPON_STATS[WeaponType.FLAMETHROWER].maxReserve }
+  });
+  const reloadTimerRef = useRef<number>(0);
 
   // UI State
   const [hp, setHp] = useState(PLAYER_MAX_HP);
   const [score, setScore] = useState(0);
-  const [enemyCount, setEnemyCount] = useState(level.enemyCount);
+  const [wave, setWave] = useState(1);
+  const [waveStateUI, setWaveStateUI] = useState<'SPAWNING' | 'CLEARING' | 'INTERMISSION'>('INTERMISSION');
+  const [intermissionTimeUI, setIntermissionTimeUI] = useState(3);
+  
   const [isPaused, setIsPaused] = useState(false);
   const [hasRapidFire, setHasRapidFire] = useState(false);
+  
+  // HUD specific
+  const [weapon, setWeapon] = useState<WeaponType>(WeaponType.PISTOL);
+  const [clip, setClip] = useState(0);
+  const [reserve, setReserve] = useState(0);
+  const [isReloading, setIsReloading] = useState(false);
 
-  // Helper: Spawn Particle
+  // Calculate enemies for current wave
+  const getWaveEnemyCount = (waveIdx: number) => {
+    return Math.ceil(level.baseEnemyCount * 0.5) + (waveIdx * 3);
+  };
+  
+  // Initial wave setup
+  useEffect(() => {
+    enemiesToSpawnRef.current = getWaveEnemyCount(1);
+    soundSystem.startMusic();
+    return () => soundSystem.stopMusic();
+  }, []);
+
   const spawnBlood = (x: number, y: number, color: string, count = 5) => {
-    for (let i = 0; i < count; i++) {
+    // Scale particle count by settings
+    let multiplier = 1;
+    if (settings.particles === 'LOW') multiplier = 0.5;
+    if (settings.particles === 'HIGH') multiplier = 2;
+    const finalCount = Math.ceil(count * multiplier);
+
+    for (let i = 0; i < finalCount; i++) {
       particlesRef.current.push({
         id: Math.random().toString(),
         x,
@@ -80,7 +136,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
           x,
           y,
           type,
-          life: 600, // 10 seconds @ 60fps
+          life: 600,
           angle: 0
         });
         break;
@@ -88,8 +144,20 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
     }
   };
 
+  const reloadWeapon = () => {
+    const w = currentWeaponRef.current;
+    const stats = WEAPON_STATS[w];
+    const currentAmmo = ammoRef.current[w];
+    
+    if (currentAmmo.clip < stats.clipSize && (currentAmmo.reserve > 0 || w === WeaponType.PISTOL)) {
+      if (reloadTimerRef.current === 0) {
+        reloadTimerRef.current = stats.reloadTime;
+        soundSystem.playReload();
+      }
+    }
+  };
+
   useEffect(() => {
-    // Init Audio on first interaction
     const initAudio = () => {
       soundSystem.init();
       window.removeEventListener('mousedown', initAudio);
@@ -100,10 +168,31 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       keysRef.current.add(e.code);
+      
       if (e.code === 'Escape') {
         setIsPaused(prev => !prev);
       }
+
+      if (!isPaused) {
+        if (e.key === '1' && unlockedWeapons.includes(WeaponType.PISTOL)) {
+          currentWeaponRef.current = WeaponType.PISTOL;
+          reloadTimerRef.current = 0; 
+        }
+        if (e.key === '2' && unlockedWeapons.includes(WeaponType.SHOTGUN)) {
+          currentWeaponRef.current = WeaponType.SHOTGUN;
+          reloadTimerRef.current = 0;
+        }
+        if (e.key === '3' && unlockedWeapons.includes(WeaponType.FLAMETHROWER)) {
+          currentWeaponRef.current = WeaponType.FLAMETHROWER;
+          reloadTimerRef.current = 0;
+        }
+        
+        if (settings.keys.reload.includes(e.code)) {
+          reloadWeapon();
+        }
+      }
     };
+
     const handleKeyUp = (e: KeyboardEvent) => keysRef.current.delete(e.code);
     const handleMouseMove = (e: MouseEvent) => {
       if (canvasRef.current) {
@@ -126,26 +215,41 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
     let animationFrameId: number;
 
     const gameLoop = () => {
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
-
-      if (!canvas || !ctx) return;
-
-      // Logic Pause
       if (isPaused) {
-        // Draw Pause Overlay once and skip logic
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.02)'; // Slight fade
-        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-        
-        ctx.fillStyle = 'white';
-        ctx.font = '40px VT323';
-        ctx.textAlign = 'center';
-        ctx.fillText("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
-        ctx.font = '20px VT323';
-        ctx.fillText("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30);
-        
         animationFrameId = requestAnimationFrame(gameLoop);
         return;
+      }
+
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!canvas || !ctx) return;
+
+      // --- UPDATE LOGIC ---
+
+      // Wave Management
+      if (waveStateRef.current === 'INTERMISSION') {
+         intermissionTimerRef.current--;
+         setIntermissionTimeUI(Math.ceil(intermissionTimerRef.current / 60));
+         if (intermissionTimerRef.current <= 0) {
+            waveStateRef.current = 'SPAWNING';
+            enemiesToSpawnRef.current = getWaveEnemyCount(waveRef.current);
+         }
+      } else if (waveStateRef.current === 'SPAWNING') {
+         // Check spawn logic below
+         if (enemiesToSpawnRef.current <= 0) {
+            waveStateRef.current = 'CLEARING';
+         }
+      } else if (waveStateRef.current === 'CLEARING') {
+         if (enemiesRef.current.length === 0) {
+            if (waveRef.current < TOTAL_WAVES) {
+               waveRef.current++;
+               waveStateRef.current = 'INTERMISSION';
+               intermissionTimerRef.current = 180; // 3s break
+            } else {
+               onGameOver(scoreRef.current, 'victory');
+               return;
+            }
+         }
       }
 
       // Clear Screen
@@ -153,105 +257,130 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
       ctx.fillStyle = level.background;
       ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-      // Apply Screen Shake
       if (shakeRef.current > 0) {
         const dx = (Math.random() - 0.5) * shakeRef.current;
         const dy = (Math.random() - 0.5) * shakeRef.current;
         ctx.translate(dx, dy);
-        shakeRef.current *= 0.9; // Decay
+        shakeRef.current *= 0.9;
         if (shakeRef.current < 0.5) shakeRef.current = 0;
       }
 
-      // --- UPDATE LOGIC ---
-
-      // 1. Player Movement
+      // Player Movement with Configurable Keys
       let dx = 0;
       let dy = 0;
-      if (keysRef.current.has('KeyW') || keysRef.current.has('ArrowUp')) dy -= 1;
-      if (keysRef.current.has('KeyS') || keysRef.current.has('ArrowDown')) dy += 1;
-      if (keysRef.current.has('KeyA') || keysRef.current.has('ArrowLeft')) dx -= 1;
-      if (keysRef.current.has('KeyD') || keysRef.current.has('ArrowRight')) dx += 1;
+      const k = keysRef.current;
+      if (settings.keys.up.some(key => k.has(key))) dy -= 1;
+      if (settings.keys.down.some(key => k.has(key))) dy += 1;
+      if (settings.keys.left.some(key => k.has(key))) dx -= 1;
+      if (settings.keys.right.some(key => k.has(key))) dx += 1;
 
       if (dx !== 0 || dy !== 0) {
-        // Normalize vector
         const length = Math.sqrt(dx * dx + dy * dy);
         dx /= length;
         dy /= length;
         
         let speed = playerRef.current.speed;
-        if (rapidFireTimerRef.current > 0) speed *= 1.2; // Speed boost with rapid fire
+        if (rapidFireTimerRef.current > 0) speed *= 1.2;
 
         playerRef.current.x += dx * speed;
         playerRef.current.y += dy * speed;
 
-        // Boundaries
         playerRef.current.x = Math.max(playerRef.current.radius, Math.min(CANVAS_WIDTH - playerRef.current.radius, playerRef.current.x));
         playerRef.current.y = Math.max(playerRef.current.radius, Math.min(CANVAS_HEIGHT - playerRef.current.radius, playerRef.current.y));
       }
 
-      // Update Player Angle
       playerRef.current.angle = Math.atan2(
         mouseRef.current.y - playerRef.current.y,
         mouseRef.current.x - playerRef.current.x
       );
 
-      // Update Rapid Fire
-      if (rapidFireTimerRef.current > 0) {
-        rapidFireTimerRef.current--;
-      }
+      if (rapidFireTimerRef.current > 0) rapidFireTimerRef.current--;
 
-      // 2. Shooting
-      let cooldown = WEAPON_STATS[level.unlockedWeapon].cooldown;
-      if (rapidFireTimerRef.current > 0) cooldown = Math.ceil(cooldown / 2);
-
-      if (isMouseDownRef.current && frameRef.current - lastShotTimeRef.current > cooldown) {
-        const weapon = WEAPON_STATS[level.unlockedWeapon];
-        lastShotTimeRef.current = frameRef.current;
-
-        // SFX
-        if (level.unlockedWeapon === WeaponType.PISTOL) soundSystem.playShoot('pistol');
-        else if (level.unlockedWeapon === WeaponType.SHOTGUN) soundSystem.playShoot('shotgun');
-        else soundSystem.playShoot('flame');
-
-        // Screen shake on shoot
-        if (level.unlockedWeapon === WeaponType.SHOTGUN) addShake(5);
-        else if (level.unlockedWeapon === WeaponType.FLAMETHROWER) addShake(1);
-        else addShake(2);
-
-        const createBullet = (angleOffset: number) => {
-          const angle = playerRef.current.angle + angleOffset;
-          bulletsRef.current.push({
-            id: Math.random().toString(),
-            x: playerRef.current.x + Math.cos(angle) * 20,
-            y: playerRef.current.y + Math.sin(angle) * 20,
-            vx: Math.cos(angle) * weapon.speed,
-            vy: Math.sin(angle) * weapon.speed,
-            damage: weapon.damage,
-            color: rapidFireTimerRef.current > 0 ? '#60a5fa' : weapon.color, // Blue bullets if rapid fire
-            radius: level.unlockedWeapon === WeaponType.FLAMETHROWER ? 4 : 3,
-            duration: weapon.duration || 1000
-          });
-        };
-
-        if (level.unlockedWeapon === WeaponType.SHOTGUN) {
-           createBullet(0);
-           createBullet(0.15);
-           createBullet(-0.15);
-           createBullet(0.3);
-           createBullet(-0.3);
-        } else if (level.unlockedWeapon === WeaponType.FLAMETHROWER) {
-           createBullet((Math.random() - 0.5) * 0.2);
-        } else {
-           createBullet(0);
+      // Reload Logic
+      if (reloadTimerRef.current > 0) {
+        reloadTimerRef.current--;
+        if (reloadTimerRef.current <= 0) {
+          const w = currentWeaponRef.current;
+          const stats = WEAPON_STATS[w];
+          const current = ammoRef.current[w];
+          const needed = stats.clipSize - current.clip;
+          
+          if (w === WeaponType.PISTOL) {
+            current.clip = stats.clipSize;
+          } else {
+            const amount = Math.min(needed, current.reserve);
+            current.clip += amount;
+            current.reserve -= amount;
+          }
         }
       }
 
-      // 3. Spawning Enemies
-      if (enemiesSpawnedRef.current < level.enemyCount) {
+      // Shooting
+      let cooldown = WEAPON_STATS[currentWeaponRef.current].cooldown;
+      if (rapidFireTimerRef.current > 0) cooldown = Math.ceil(cooldown / 2);
+
+      if (isMouseDownRef.current && frameRef.current - lastShotTimeRef.current > cooldown) {
+        const weapon = WEAPON_STATS[currentWeaponRef.current];
+        const currentAmmo = ammoRef.current[currentWeaponRef.current];
+
+        if (reloadTimerRef.current > 0) {
+          // Cannot shoot
+        } else if (currentAmmo.clip <= 0) {
+          if (frameRef.current - lastShotTimeRef.current > 20) {
+             soundSystem.playEmpty();
+             lastShotTimeRef.current = frameRef.current;
+             reloadWeapon();
+          }
+        } else {
+          lastShotTimeRef.current = frameRef.current;
+          currentAmmo.clip--;
+
+          if (currentWeaponRef.current === WeaponType.PISTOL) soundSystem.playShoot('pistol');
+          else if (currentWeaponRef.current === WeaponType.SHOTGUN) soundSystem.playShoot('shotgun');
+          else soundSystem.playShoot('flame');
+
+          if (currentWeaponRef.current === WeaponType.SHOTGUN) addShake(5);
+          else if (currentWeaponRef.current === WeaponType.FLAMETHROWER) addShake(1);
+          else addShake(2);
+
+          const createBullet = (angleOffset: number) => {
+            const angle = playerRef.current.angle + angleOffset;
+            bulletsRef.current.push({
+              id: Math.random().toString(),
+              x: playerRef.current.x + Math.cos(angle) * 20,
+              y: playerRef.current.y + Math.sin(angle) * 20,
+              vx: Math.cos(angle) * weapon.speed,
+              vy: Math.sin(angle) * weapon.speed,
+              damage: weapon.damage,
+              color: rapidFireTimerRef.current > 0 ? '#60a5fa' : weapon.color,
+              radius: currentWeaponRef.current === WeaponType.FLAMETHROWER ? 4 : 3,
+              duration: weapon.duration || 1000
+            });
+          };
+
+          if (currentWeaponRef.current === WeaponType.SHOTGUN) {
+            createBullet(0);
+            createBullet(0.15);
+            createBullet(-0.15);
+            createBullet(0.3);
+            createBullet(-0.3);
+          } else if (currentWeaponRef.current === WeaponType.FLAMETHROWER) {
+            createBullet((Math.random() - 0.5) * 0.2);
+          } else {
+            createBullet(0);
+          }
+        }
+      }
+
+      // Enemy Spawning
+      if (waveStateRef.current === 'SPAWNING' && enemiesToSpawnRef.current > 0) {
         spawnTimerRef.current++;
-        if (spawnTimerRef.current > level.spawnRate) {
+        // Spawn rate speeds up in later waves
+        const currentSpawnRate = Math.max(30, level.spawnRate - (waveRef.current * 5));
+        
+        if (spawnTimerRef.current > currentSpawnRate) {
           spawnTimerRef.current = 0;
-          enemiesSpawnedRef.current++;
+          enemiesToSpawnRef.current--;
           
           const edge = Math.floor(Math.random() * 4);
           let ex = 0, ey = 0;
@@ -270,18 +399,15 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
             type: type,
             radius: stats.radius,
             color: stats.color,
-            speed: stats.speed,
+            speed: stats.speed * diffMod.speed, // Apply Difficulty
             angle: 0,
-            hp: stats.hp,
-            maxHp: stats.hp
+            hp: stats.hp * diffMod.hp, // Apply Difficulty
+            maxHp: stats.hp * diffMod.hp
           });
         }
-      } else if (enemiesRef.current.length === 0) {
-        onGameOver(scoreRef.current, 'victory');
-        return;
       }
 
-      // 4. Update Enemies
+      // Update Enemies
       enemiesRef.current.forEach(enemy => {
         const angle = Math.atan2(playerRef.current.y - enemy.y, playerRef.current.x - enemy.x);
         enemy.x += Math.cos(angle) * enemy.speed;
@@ -291,7 +417,8 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
         const dist = Math.hypot(playerRef.current.x - enemy.x, playerRef.current.y - enemy.y);
         if (dist < playerRef.current.radius + enemy.radius) {
           if (frameRef.current % 30 === 0) {
-             playerRef.current.hp -= 10;
+             // Flat damage for now, could scale with difficulty if desired (diffMod.damage)
+             playerRef.current.hp -= 10 * diffMod.damage; 
              addShake(10);
              soundSystem.playPlayerHit();
              spawnBlood(playerRef.current.x, playerRef.current.y, '#ef4444');
@@ -302,14 +429,14 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
         }
       });
 
-      // 5. Update Bullets
+      // Update Bullets
       for (let i = bulletsRef.current.length - 1; i >= 0; i--) {
         const b = bulletsRef.current[i];
         b.x += b.vx;
         b.y += b.vy;
         b.duration--;
 
-        if (b.x < 0 || b.x > CANVAS_WIDTH || b.y < 0 || b.y > CANVAS_HEIGHT || (level.unlockedWeapon === WeaponType.FLAMETHROWER && b.duration <= 0)) {
+        if (b.x < 0 || b.x > CANVAS_WIDTH || b.y < 0 || b.y > CANVAS_HEIGHT || (currentWeaponRef.current === WeaponType.FLAMETHROWER && b.duration <= 0)) {
           bulletsRef.current.splice(i, 1);
           continue;
         }
@@ -326,35 +453,33 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
             soundSystem.playEnemyHit();
             
             if (enemy.hp <= 0) {
-              scoreRef.current += ENEMY_STATS[enemy.type!].score;
-              spawnItem(enemy.x, enemy.y); // Attempt drop
+              scoreRef.current += ENEMY_STATS[enemy.type!].score * diffMod.score;
+              spawnItem(enemy.x, enemy.y); 
               enemiesRef.current.splice(j, 1);
             }
             break; 
           }
         }
 
-        if (hit && level.unlockedWeapon !== WeaponType.FLAMETHROWER) {
+        if (hit && currentWeaponRef.current !== WeaponType.FLAMETHROWER) {
            bulletsRef.current.splice(i, 1);
         }
       }
 
-      // 6. Update Items
+      // Update Items
       for (let i = itemsRef.current.length - 1; i >= 0; i--) {
         const item = itemsRef.current[i];
         item.life--;
-        item.angle += 0.05; // Float rotation
+        item.angle += 0.05;
         
-        // Collision with player
         const dist = Math.hypot(playerRef.current.x - item.x, playerRef.current.y - item.y);
-        if (dist < playerRef.current.radius + 15) { // Slightly larger pickup radius
-           // Apply Effect
+        if (dist < playerRef.current.radius + 15) { 
            const stats = ITEM_STATS[item.type];
+           
            if (item.type === ItemType.MEDKIT) {
              playerRef.current.hp = Math.min(playerRef.current.maxHp, playerRef.current.hp + stats.heal!);
              soundSystem.playPickup('health');
            } else if (item.type === ItemType.NUKE) {
-             // Kill all enemies
              enemiesRef.current.forEach(e => {
                scoreRef.current += ENEMY_STATS[e.type!].score;
                spawnBlood(e.x, e.y, '#166534', 10);
@@ -364,6 +489,12 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
              soundSystem.playPickup('nuke');
            } else if (item.type === ItemType.RAPID_FIRE) {
              rapidFireTimerRef.current = stats.duration!;
+             soundSystem.playPickup('ammo');
+           } else if (item.type === ItemType.AMMO) {
+             Object.keys(ammoRef.current).forEach(key => {
+                const w = key as WeaponType;
+                ammoRef.current[w].reserve = Math.min(WEAPON_STATS[w].maxReserve, ammoRef.current[w].reserve + WEAPON_STATS[w].clipSize * 2);
+             });
              soundSystem.playPickup('ammo');
            }
            
@@ -375,7 +506,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
         if (item.life <= 0) itemsRef.current.splice(i, 1);
       }
 
-      // 7. Update Particles
+      // Update Particles
       for (let i = particlesRef.current.length - 1; i >= 0; i--) {
         const p = particlesRef.current[i];
         p.x += p.vx;
@@ -386,36 +517,26 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
 
       // --- DRAWING ---
 
-      // Draw Items (Under entities)
       itemsRef.current.forEach(item => {
         const stats = ITEM_STATS[item.type];
         const floatY = Math.sin(frameRef.current * 0.1) * 3;
-        
         ctx.save();
         ctx.translate(item.x, item.y + floatY);
-        
-        // Glow
         ctx.shadowBlur = 10;
         ctx.shadowColor = stats.color;
-        
-        // Box
         ctx.fillStyle = stats.color;
         ctx.fillRect(-10, -10, 20, 20);
         ctx.strokeStyle = 'white';
         ctx.lineWidth = 2;
         ctx.strokeRect(-10, -10, 20, 20);
-
-        // Symbol
         ctx.fillStyle = 'white';
         ctx.font = 'bold 16px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(stats.symbol, 0, 1);
-        
         ctx.restore();
       });
 
-      // Draw Particles
       particlesRef.current.forEach(p => {
         ctx.fillStyle = p.color;
         ctx.beginPath();
@@ -423,21 +544,17 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
         ctx.fill();
       });
 
-      // Draw Enemies
       enemiesRef.current.forEach(enemy => {
         ctx.save();
         ctx.translate(enemy.x, enemy.y);
         ctx.rotate(enemy.angle);
-        
         ctx.fillStyle = enemy.color;
         ctx.beginPath();
         ctx.arc(0, 0, enemy.radius, 0, Math.PI * 2);
         ctx.fill();
-        
         ctx.fillStyle = enemy.color; 
         ctx.fillRect(0, -enemy.radius, enemy.radius + 5, 8); 
         ctx.fillRect(0, enemy.radius - 8, enemy.radius + 5, 8);
-
         if (enemy.hp < enemy.maxHp) {
            ctx.fillStyle = 'red';
            ctx.fillRect(-10, -25, 20, 4);
@@ -450,26 +567,31 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
       // Draw Player
       ctx.save();
       ctx.translate(playerRef.current.x, playerRef.current.y);
-      ctx.rotate(playerRef.current.angle);
       
+      if (reloadTimerRef.current > 0) {
+        const maxTime = WEAPON_STATS[currentWeaponRef.current].reloadTime;
+        const progress = 1 - (reloadTimerRef.current / maxTime);
+        ctx.fillStyle = 'black';
+        ctx.fillRect(-15, -30, 30, 6);
+        ctx.fillStyle = 'yellow';
+        ctx.fillRect(-14, -29, 28 * progress, 4);
+      }
+
+      ctx.rotate(playerRef.current.angle);
       const walkAnim = Math.sin(frameRef.current * 0.2) * 5;
       ctx.fillStyle = '#1e3a8a';
       if (dx !== 0 || dy !== 0) {
          ctx.fillRect(-5, 8 + walkAnim, 10, 5);
          ctx.fillRect(-5, -12 - walkAnim, 10, 5);
       }
-
-      ctx.fillStyle = rapidFireTimerRef.current > 0 ? '#93c5fd' : playerRef.current.color; // Flash blue
+      ctx.fillStyle = rapidFireTimerRef.current > 0 ? '#93c5fd' : playerRef.current.color; 
       ctx.beginPath();
       ctx.arc(0, 0, playerRef.current.radius, 0, Math.PI * 2);
       ctx.fill();
-
       ctx.fillStyle = '#94a3b8';
       ctx.fillRect(0, -4, 25, 8);
-
       ctx.restore();
 
-      // Draw Bullets
       bulletsRef.current.forEach(b => {
         ctx.fillStyle = b.color;
         ctx.beginPath();
@@ -477,13 +599,18 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
         ctx.fill();
       });
 
-      ctx.restore(); // Restore from Shake
+      ctx.restore();
 
-      // Sync State
+      // Sync UI state
       setHp(playerRef.current.hp);
       setScore(scoreRef.current);
-      setEnemyCount(level.enemyCount - enemiesSpawnedRef.current + enemiesRef.current.length);
+      setWave(waveRef.current);
+      setWaveStateUI(waveStateRef.current);
       setHasRapidFire(rapidFireTimerRef.current > 0);
+      setWeapon(currentWeaponRef.current);
+      setClip(ammoRef.current[currentWeaponRef.current].clip);
+      setReserve(ammoRef.current[currentWeaponRef.current].reserve);
+      setIsReloading(reloadTimerRef.current > 0);
 
       frameRef.current++;
       animationFrameId = requestAnimationFrame(gameLoop);
@@ -499,7 +626,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
       window.removeEventListener('mouseup', handleMouseUp);
       cancelAnimationFrame(animationFrameId);
     };
-  }, [level, onGameOver]);
+  }, [level, settings, onGameOver, isPaused]); 
 
   return (
     <div className="relative">
@@ -509,8 +636,20 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
          height={CANVAS_HEIGHT} 
          className="block border-4 border-zinc-800 bg-black rounded shadow-2xl cursor-crosshair mx-auto"
        />
+       
+       {/* Wave Notification */}
+       {waveStateUI === 'INTERMISSION' && (
+         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+             <div className="bg-black/70 p-6 rounded text-center border-y-4 border-green-600 w-full backdrop-blur-sm">
+               <h3 className="text-4xl font-bold text-green-500 mb-2">WAVE {wave} CLEARED</h3>
+               <p className="text-white text-xl animate-pulse">NEXT WAVE IN {intermissionTimeUI}...</p>
+             </div>
+         </div>
+       )}
+
        {/* HUD Overlay */}
        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 w-[780px] flex justify-between text-white font-bold text-xl pointer-events-none">
+          {/* Health */}
           <div className="flex flex-col bg-black/50 p-2 rounded border border-zinc-700 w-48">
              <div className="flex items-center gap-2">
                 <Heart className="text-red-500" size={20} />
@@ -523,27 +662,55 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, onGameOver }) => {
              </div>
           </div>
           
-          <div className="flex flex-col items-center justify-center bg-black/50 p-2 rounded border border-zinc-700 min-w-[120px]">
-             <span className="text-yellow-400 text-2xl leading-none">{level.unlockedWeapon.toUpperCase()}</span>
+          {/* Weapon Bar */}
+          <div className="flex flex-col items-center justify-center gap-2">
+            <div className="flex gap-1 bg-black/50 p-1 rounded border border-zinc-700">
+              {unlockedWeapons.map((w, idx) => (
+                <div 
+                  key={w} 
+                  className={`w-8 h-8 flex items-center justify-center text-sm border ${weapon === w ? 'border-green-500 text-green-500 bg-green-900/30' : 'border-zinc-600 text-zinc-600'}`}
+                >
+                  {idx + 1}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 bg-black/50 px-4 py-2 rounded border border-zinc-700 min-w-[160px] justify-center">
+               <div className="text-right">
+                 <div className={`text-2xl leading-none ${clip === 0 ? 'text-red-500 animate-pulse' : 'text-yellow-400'}`}>
+                   {isReloading ? 'RLD' : clip}
+                 </div>
+                 <div className="text-xs text-zinc-400">/ {reserve > 900 ? '∞' : reserve}</div>
+               </div>
+               <div className="text-sm text-zinc-300 border-l border-zinc-600 pl-3">
+                 {weapon.toUpperCase()}
+               </div>
+            </div>
              {hasRapidFire && (
-               <div className="text-blue-400 text-xs flex items-center gap-1 animate-pulse mt-1">
+               <div className="text-blue-400 text-xs flex items-center gap-1 animate-pulse">
                  <Zap size={12} /> RAPID FIRE
                </div>
              )}
           </div>
 
+          {/* Score & Wave */}
           <div className="flex flex-col items-end bg-black/50 p-2 rounded border border-zinc-700 w-48">
              <span className="text-blue-400">SCORE: {score.toString().padStart(6, '0')}</span>
-             <span className="text-red-400 text-sm flex items-center gap-1">
-               <Radiation size={14} /> HOSTILES: {enemyCount}
+             <span className="text-yellow-400 text-sm flex items-center gap-1">
+               <Radiation size={14} /> WAVE {wave}/{TOTAL_WAVES}
              </span>
           </div>
        </div>
 
-       {/* Pause Hint (if not paused) */}
-       {!isPaused && (
-         <div className="absolute bottom-2 right-4 text-zinc-600 text-sm font-mono pointer-events-none">
-           [ESC] PAUSE
+       {isPaused && (
+         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+           <div className="bg-zinc-900 border-2 border-zinc-700 p-8 w-80 text-center shadow-2xl">
+             <h2 className="text-4xl font-bold text-white mb-4 tracking-widest">PAUSED</h2>
+             <p className="text-zinc-500 text-sm mb-8">Press ESC to Resume</p>
+             <div className="flex flex-col gap-2 text-zinc-400 text-xs">
+               <p>Difficulty: {settings.difficulty}</p>
+               <p>Particles: {settings.particles}</p>
+             </div>
+           </div>
          </div>
        )}
     </div>

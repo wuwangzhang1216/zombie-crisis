@@ -1,23 +1,47 @@
+
 import React, { useState, useEffect } from 'react';
 import GameEngine from './components/GameEngine';
 import BriefingModal from './components/BriefingModal';
-import { GameState, LevelConfig } from './types';
-import { LEVELS, CANVAS_WIDTH } from './constants';
-import { Gamepad2, Skull, Trophy, Crown } from 'lucide-react';
+import { GameState, LevelConfig, GameSettings, Difficulty } from './types';
+import { LEVELS, CANVAS_WIDTH, DEFAULT_SETTINGS } from './constants';
+import { soundSystem } from './services/SoundSystem';
+import { Gamepad2, Skull, Trophy, Crown, Settings as SettingsIcon, X, Volume2, Volume1, Music, Monitor, Gauge } from 'lucide-react';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
   const [currentLevel, setCurrentLevel] = useState<LevelConfig>(LEVELS[0]);
   const [finalScore, setFinalScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
+  
+  // Settings State
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
 
-  // Load high score on mount
+  // Load Data on Mount
   useEffect(() => {
-    const saved = localStorage.getItem('zombie_crisis_highscore');
-    if (saved) {
-      setHighScore(parseInt(saved, 10));
+    const savedScore = localStorage.getItem('zombie_crisis_highscore');
+    if (savedScore) setHighScore(parseInt(savedScore, 10));
+
+    const savedSettings = localStorage.getItem('zombie_crisis_settings');
+    if (savedSettings) {
+      try {
+        const parsed = JSON.parse(savedSettings);
+        setSettings({ ...DEFAULT_SETTINGS, ...parsed });
+        soundSystem.setVolumes(parsed.masterVolume, parsed.musicVolume, parsed.sfxVolume);
+      } catch (e) {
+        console.error("Failed to load settings", e);
+      }
+    } else {
+       // Init sound system with defaults if no save
+       soundSystem.setVolumes(DEFAULT_SETTINGS.masterVolume, DEFAULT_SETTINGS.musicVolume, DEFAULT_SETTINGS.sfxVolume);
     }
   }, []);
+
+  const saveSettings = (newSettings: GameSettings) => {
+    setSettings(newSettings);
+    soundSystem.setVolumes(newSettings.masterVolume, newSettings.musicVolume, newSettings.sfxVolume);
+    localStorage.setItem('zombie_crisis_settings', JSON.stringify(newSettings));
+  };
 
   const updateHighScore = (score: number) => {
     if (score > highScore) {
@@ -38,14 +62,13 @@ const App: React.FC = () => {
 
   const handleGameOver = (score: number, reason: 'victory' | 'defeat') => {
     setFinalScore(score);
-    updateHighScore(score); // Check and update high score
+    updateHighScore(score); 
     
     if (reason === 'victory') {
-      // Check if there is a next level
       const nextLevel = LEVELS.find(l => l.id === currentLevel.id + 1);
       if (nextLevel) {
         setCurrentLevel(nextLevel);
-        setGameState(GameState.BRIEFING); // Loop immediately to next level briefing
+        setGameState(GameState.BRIEFING);
       } else {
         setGameState(GameState.VICTORY);
       }
@@ -73,7 +96,15 @@ const App: React.FC = () => {
       <div className="relative" style={{ width: Math.min(window.innerWidth - 32, CANVAS_WIDTH) }}>
         
         {gameState === GameState.MENU && (
-          <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-zinc-800 p-8 shadow-2xl">
+          <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-zinc-800 p-8 shadow-2xl relative">
+             {/* Settings Toggle */}
+            <button 
+              onClick={() => setShowSettings(true)}
+              className="absolute top-4 right-4 text-zinc-500 hover:text-white transition-colors"
+            >
+              <SettingsIcon size={24} />
+            </button>
+
             <h2 className="text-2xl text-green-500 mb-6 border-b border-zinc-700 pb-4">SELECT OPERATION</h2>
             <div className="grid gap-4">
               {LEVELS.map((level) => (
@@ -94,7 +125,109 @@ const App: React.FC = () => {
             </div>
             
             <div className="mt-8 text-zinc-600 text-sm text-center">
-              CONTROLS: WASD to Move | MOUSE to Aim & Shoot | ESC to Pause
+              CONTROLS: WASD to Move | MOUSE to Aim & Shoot | [1-3] Change Weapon | [R] Reload
+            </div>
+          </div>
+        )}
+
+        {/* Settings Overlay */}
+        {showSettings && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur">
+            <div className="bg-zinc-900 border-2 border-zinc-600 p-8 w-96 shadow-2xl">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-2xl text-white font-bold">SETTINGS</h3>
+                <button onClick={() => setShowSettings(false)} className="text-zinc-500 hover:text-red-500">
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                {/* Audio Section */}
+                <div>
+                  <h4 className="text-zinc-400 text-sm mb-3 border-b border-zinc-700 pb-1 flex items-center gap-2">
+                    <Volume2 size={14}/> AUDIO
+                  </h4>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs text-zinc-500 flex justify-between">
+                        <span>MASTER</span> <span>{Math.round(settings.masterVolume * 100)}%</span>
+                      </label>
+                      <input 
+                        type="range" min="0" max="1" step="0.1"
+                        value={settings.masterVolume}
+                        onChange={(e) => saveSettings({...settings, masterVolume: parseFloat(e.target.value)})}
+                        className="w-full accent-green-500"
+                      />
+                    </div>
+                    <div>
+                       <label className="text-xs text-zinc-500 flex justify-between">
+                        <span>MUSIC</span> <span>{Math.round(settings.musicVolume * 100)}%</span>
+                      </label>
+                      <input 
+                        type="range" min="0" max="1" step="0.1"
+                        value={settings.musicVolume}
+                        onChange={(e) => saveSettings({...settings, musicVolume: parseFloat(e.target.value)})}
+                        className="w-full accent-blue-500"
+                      />
+                    </div>
+                    <div>
+                       <label className="text-xs text-zinc-500 flex justify-between">
+                        <span>SFX</span> <span>{Math.round(settings.sfxVolume * 100)}%</span>
+                      </label>
+                      <input 
+                        type="range" min="0" max="1" step="0.1"
+                        value={settings.sfxVolume}
+                        onChange={(e) => saveSettings({...settings, sfxVolume: parseFloat(e.target.value)})}
+                        className="w-full accent-orange-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Difficulty Section */}
+                <div>
+                   <h4 className="text-zinc-400 text-sm mb-3 border-b border-zinc-700 pb-1 flex items-center gap-2">
+                    <Gauge size={14}/> DIFFICULTY
+                  </h4>
+                   <div className="flex gap-2">
+                     {(Object.keys(Difficulty) as Difficulty[]).map(diff => (
+                       <button
+                         key={diff}
+                         onClick={() => saveSettings({...settings, difficulty: diff})}
+                         className={`flex-1 py-1 text-xs font-bold rounded border ${
+                           settings.difficulty === diff 
+                           ? 'bg-green-900 border-green-500 text-green-400' 
+                           : 'bg-black border-zinc-700 text-zinc-500 hover:border-zinc-500'
+                         }`}
+                       >
+                         {diff}
+                       </button>
+                     ))}
+                   </div>
+                </div>
+
+                {/* Graphics Section */}
+                <div>
+                   <h4 className="text-zinc-400 text-sm mb-3 border-b border-zinc-700 pb-1 flex items-center gap-2">
+                    <Monitor size={14}/> GRAPHICS
+                  </h4>
+                  <div className="flex gap-2">
+                     {['LOW', 'MEDIUM', 'HIGH'].map(opt => (
+                       <button
+                         key={opt}
+                         onClick={() => saveSettings({...settings, particles: opt as any})}
+                         className={`flex-1 py-1 text-xs font-bold rounded border ${
+                           settings.particles === opt 
+                           ? 'bg-blue-900 border-blue-500 text-blue-400' 
+                           : 'bg-black border-zinc-700 text-zinc-500 hover:border-zinc-500'
+                         }`}
+                       >
+                         {opt}
+                       </button>
+                     ))}
+                   </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -104,7 +237,7 @@ const App: React.FC = () => {
         )}
 
         {gameState === GameState.PLAYING && (
-          <GameEngine level={currentLevel} onGameOver={handleGameOver} />
+          <GameEngine level={currentLevel} settings={settings} onGameOver={handleGameOver} />
         )}
 
         {gameState === GameState.GAME_OVER && (

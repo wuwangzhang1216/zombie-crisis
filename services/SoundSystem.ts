@@ -1,18 +1,118 @@
+
 class SoundSystem {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private musicGain: GainNode | null = null;
+  private sfxGain: GainNode | null = null;
+  
+  private masterVolume: number = 0.5;
+  private musicVolume: number = 0.5;
+  private sfxVolume: number = 0.7;
+
+  private musicOscillators: OscillatorNode[] = [];
+  private musicInterval: number | null = null;
 
   public init() {
     if (!this.ctx) {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       this.ctx = new AudioContextClass();
+      
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.value = 0.3; // Master volume
+      this.masterGain.gain.value = this.masterVolume;
       this.masterGain.connect(this.ctx.destination);
+
+      this.musicGain = this.ctx.createGain();
+      this.musicGain.gain.value = this.musicVolume;
+      this.musicGain.connect(this.masterGain);
+
+      this.sfxGain = this.ctx.createGain();
+      this.sfxGain.gain.value = this.sfxVolume;
+      this.sfxGain.connect(this.masterGain);
     }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
+  }
+
+  public setVolumes(master: number, music: number, sfx: number) {
+    this.masterVolume = master;
+    this.musicVolume = music;
+    this.sfxVolume = sfx;
+
+    if (this.ctx) {
+      const t = this.ctx.currentTime;
+      this.masterGain?.gain.setTargetAtTime(master, t, 0.1);
+      this.musicGain?.gain.setTargetAtTime(music, t, 0.1);
+      this.sfxGain?.gain.setTargetAtTime(sfx, t, 0.1);
+    }
+  }
+
+  public startMusic() {
+    if (!this.ctx || this.musicOscillators.length > 0) return;
+    this.init();
+    
+    // Create a dark ambient drone
+    const createDrone = (freq: number, type: OscillatorType) => {
+      if (!this.ctx || !this.musicGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      
+      osc.type = type;
+      osc.frequency.value = freq;
+      
+      // Lowpass filter for muffled dark sound
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 200;
+      
+      gain.gain.value = 0.1;
+      
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicGain);
+      
+      osc.start();
+      this.musicOscillators.push(osc);
+    };
+
+    createDrone(55, 'sawtooth'); // Low A
+    createDrone(56, 'sine');     // Low A detuned (beating effect)
+    
+    // Random eerie high pitched sounds
+    this.musicInterval = window.setInterval(() => {
+      if (Math.random() > 0.7) {
+         this.playAmbientSting();
+      }
+    }, 5000);
+  }
+
+  public stopMusic() {
+    this.musicOscillators.forEach(osc => {
+      try { osc.stop(); } catch(e) {}
+    });
+    this.musicOscillators = [];
+    if (this.musicInterval) {
+      clearInterval(this.musicInterval);
+      this.musicInterval = null;
+    }
+  }
+
+  private playAmbientSting() {
+     if (!this.ctx || !this.musicGain) return;
+     const osc = this.ctx.createOscillator();
+     const gain = this.ctx.createGain();
+     
+     osc.frequency.setValueAtTime(800 + Math.random() * 500, this.ctx.currentTime);
+     osc.frequency.exponentialRampToValueAtTime(200, this.ctx.currentTime + 2);
+     
+     gain.gain.setValueAtTime(0, this.ctx.currentTime);
+     gain.gain.linearRampToValueAtTime(0.05, this.ctx.currentTime + 0.5);
+     gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 2);
+     
+     osc.connect(gain);
+     gain.connect(this.musicGain);
+     osc.start();
+     osc.stop(this.ctx.currentTime + 2);
   }
 
   private playOscillator(
@@ -22,7 +122,7 @@ class SoundSystem {
     duration: number, 
     vol: number = 1
   ) {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.ctx || !this.sfxGain) return;
     
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -35,14 +135,14 @@ class SoundSystem {
     gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
     
     osc.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(this.sfxGain);
     
     osc.start();
     osc.stop(this.ctx.currentTime + duration);
   }
 
   private playNoise(duration: number) {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.ctx || !this.sfxGain) return;
 
     const bufferSize = this.ctx.sampleRate * duration;
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
@@ -60,7 +160,7 @@ class SoundSystem {
     gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
     
     noise.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(this.sfxGain);
     
     noise.start();
   }
@@ -76,6 +176,17 @@ class SoundSystem {
     } else if (type === 'flame') {
       this.playNoise(0.05); // Continuous short bursts loop
     }
+  }
+
+  public playEmpty() {
+    this.playOscillator('triangle', 800, 800, 0.05, 0.5);
+  }
+
+  public playReload() {
+    this.playOscillator('square', 100, 150, 0.1, 0.3);
+    setTimeout(() => {
+      this.playOscillator('square', 150, 200, 0.1, 0.3);
+    }, 150);
   }
 
   public playEnemyHit() {
@@ -94,6 +205,7 @@ class SoundSystem {
       this.playNoise(1.5);
       this.playOscillator('sawtooth', 50, 10, 1.5, 0.5);
     } else {
+      // Ammo / Rapid Fire
       this.playOscillator('square', 800, 1200, 0.15, 0.4);
     }
   }

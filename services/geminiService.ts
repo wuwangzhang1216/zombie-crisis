@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { LevelConfig, EnemyType } from '../types';
 
@@ -5,7 +6,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const generateBriefing = async (level: LevelConfig): Promise<string> => {
   if (!process.env.API_KEY) {
-    return `CONNECTION TO HQ FAILED. PROCEED WITH CAUTION. \n\nTarget: ${level.name}\nHostiles: ${level.enemyCount}`;
+    return `CONNECTION TO HQ FAILED. PROCEED WITH CAUTION. \n\nTarget: ${level.name}\nHostiles: ${level.baseEnemyCount}`;
   }
 
   const enemyDesc = level.enemyTypes.map(t => {
@@ -20,7 +21,7 @@ export const generateBriefing = async (level: LevelConfig): Promise<string> => {
     
     Intel:
     - Enemy types present: ${enemyDesc}
-    - Total estimated hostiles: ${level.enemyCount}
+    - Total estimated hostiles: ${level.baseEnemyCount}
     - New weapon authorized: ${level.unlockedWeapon}
 
     Style:

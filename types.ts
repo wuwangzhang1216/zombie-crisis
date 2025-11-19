@@ -1,3 +1,4 @@
+
 export enum GameState {
   MENU = 'MENU',
   BRIEFING = 'BRIEFING',
@@ -21,14 +22,21 @@ export enum EnemyType {
 export enum ItemType {
   MEDKIT = 'MEDKIT',
   NUKE = 'NUKE',
-  RAPID_FIRE = 'RAPID_FIRE'
+  RAPID_FIRE = 'RAPID_FIRE',
+  AMMO = 'AMMO'
+}
+
+export enum Difficulty {
+  EASY = 'EASY',
+  NORMAL = 'NORMAL',
+  HARD = 'HARD'
 }
 
 export interface LevelConfig {
   id: number;
   name: string;
   description: string;
-  enemyCount: number;
+  baseEnemyCount: number; // Renamed from enemyCount to imply scaling
   spawnRate: number; // frames between spawns
   enemyTypes: EnemyType[];
   unlockedWeapon: WeaponType;
@@ -78,4 +86,21 @@ export interface Item {
   type: ItemType;
   life: number; // Despawn timer
   angle: number; // For floating animation
+}
+
+export interface KeyBindings {
+  up: string[];
+  down: string[];
+  left: string[];
+  right: string[];
+  reload: string[];
+}
+
+export interface GameSettings {
+  masterVolume: number;
+  musicVolume: number;
+  sfxVolume: number;
+  difficulty: Difficulty;
+  particles: 'LOW' | 'MEDIUM' | 'HIGH';
+  keys: KeyBindings;
 }
