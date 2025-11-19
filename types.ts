@@ -90,6 +90,7 @@ export interface Entity {
   attackTimer?: number; 
   enraged?: boolean; 
   dead?: boolean; // For multiplayer respawn logic
+  respawnTimer?: number; // Co-op auto-revive timer
   score?: number; // Individual score tracking
 }
 

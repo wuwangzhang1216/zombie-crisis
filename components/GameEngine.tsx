@@ -62,6 +62,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
     hp: maxHp,
     maxHp: maxHp,
     dead: false,
+    respawnTimer: 0,
     score: 0
   });
 
@@ -155,17 +156,19 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
     combo: number;
     timeAttackTime: number;
     activePowerups: string[];
+    respawnTimers: number[];
   }>({
     hp: [maxHp], score: 0, wave: 1, waveState: 'INTERMISSION', intermissionTime: 3,
     weapon: [WeaponType.PISTOL], clip: [0], reserve: [0], isReloading: [false], combo: 0,
-    timeAttackTime: TIME_ATTACK_LIMIT, activePowerups: []
+    timeAttackTime: TIME_ATTACK_LIMIT, activePowerups: [], respawnTimers: [0]
   });
 
   const [isPaused, setIsPaused] = useState(false);
 
   const getWaveEnemyCount = (waveIdx: number) => {
     if (gameMode === GameMode.ENDLESS || gameMode === GameMode.COOP) {
-       return Math.ceil(10 + waveIdx * 6 * (isMultiplayer ? 1.5 : 1));
+       // Reduced multiplier from 1.5 to 1.1 for better balance in Co-op
+       return Math.ceil(10 + waveIdx * 6 * (isMultiplayer ? 1.1 : 1));
     }
     return Math.ceil(level.baseEnemyCount * 0.5) + (waveIdx * 4);
   };
@@ -266,9 +269,11 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
   const spawnItem = (x: number, y: number) => {
     const rand = Math.random();
     let cumulativeChance = 0;
+    // Increase drop rate in multiplayer to account for split resources
+    const chanceMultiplier = isMultiplayer ? 2.0 : 1.0;
     
     for (const type of Object.keys(ITEM_STATS) as ItemType[]) {
-      cumulativeChance += ITEM_STATS[type].chance;
+      cumulativeChance += ITEM_STATS[type].chance * chanceMultiplier;
       if (rand < cumulativeChance) {
         itemsRef.current.push({
           id: Math.random().toString(),
@@ -395,12 +400,44 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
 
       statsRef.current.timeElapsed += 1;
 
+      // Timers
+      if (rapidFireTimerRef.current > 0) rapidFireTimerRef.current--;
+      if (doublePointsTimerRef.current > 0) doublePointsTimerRef.current--;
+      if (shieldTimerRef.current > 0) shieldTimerRef.current--;
+      if (freezeTimerRef.current > 0) freezeTimerRef.current--;
+
       if (gameMode === GameMode.TIME_ATTACK) {
          timeAttackTimerRef.current--;
          if (timeAttackTimerRef.current <= 0) {
             onGameOver(statsRef.current, 'victory');
             return;
          }
+      }
+
+      // Multiplayer Auto-Respawn Logic
+      if (isMultiplayer) {
+        const alivePlayers = playersRef.current.filter(p => !p.dead);
+        if (alivePlayers.length > 0) {
+            playersRef.current.forEach(p => {
+                if (p.dead) {
+                    if (p.respawnTimer && p.respawnTimer > 0) {
+                        p.respawnTimer--;
+                        if (p.respawnTimer <= 0) {
+                            // Revive
+                            p.dead = false;
+                            p.hp = p.maxHp;
+                            p.respawnTimer = 0;
+                            // Teleport to an alive player
+                            const buddy = alivePlayers[0];
+                            p.x = buddy.x;
+                            p.y = buddy.y;
+                            spawnFloatingText(p.x, p.y, "REINFORCEMENTS!", "#00ff00", 24);
+                            soundSystem.playPickup('powerup');
+                        }
+                    }
+                }
+            });
+        }
       }
 
       if (comboRef.current.count > 0) {
@@ -437,9 +474,13 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
                   if (p.dead) {
                      p.dead = false;
                      p.hp = p.maxHp;
+                     p.respawnTimer = 0;
                      p.x = CANVAS_WIDTH / 2;
                      p.y = CANVAS_HEIGHT / 2;
                      spawnFloatingText(p.x, p.y, "RESPAWNED", "#ffffff", 20);
+                  } else {
+                    // Heal survivor slightly
+                    p.hp = Math.min(p.hp + 20, p.maxHp);
                   }
                });
             } else {
@@ -454,614 +495,643 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
       ctx.fillStyle = level.background;
       ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
+      // Screen Shake
       if (shakeRef.current > 0) {
-        const dx = (Math.random() - 0.5) * shakeRef.current;
-        const dy = (Math.random() - 0.5) * shakeRef.current;
-        ctx.translate(dx, dy);
-        shakeRef.current *= 0.9;
-        if (shakeRef.current < 0.5) shakeRef.current = 0;
+          const shakeX = (Math.random() - 0.5) * shakeRef.current;
+          const shakeY = (Math.random() - 0.5) * shakeRef.current;
+          ctx.translate(shakeX, shakeY);
+          shakeRef.current *= 0.9;
+          if (shakeRef.current < 0.5) shakeRef.current = 0;
       }
 
       // Draw Obstacles
+      ctx.lineWidth = 2;
       obstaclesRef.current.forEach(obs => {
-        if (obs.type === 'WALL' || obs.type === 'BARREL') {
-           ctx.fillStyle = obs.type === 'BARREL' ? '#ef4444' : '#374151'; 
-        } else {
-           ctx.fillStyle = '#78350f';
-        }
-        
-        ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
-        ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
-        ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
-        
-        if (obs.type === 'CRATE') {
+        if (obs.type === 'WALL') {
+           ctx.fillStyle = '#3f3f46';
+           ctx.strokeStyle = '#18181b';
+           ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+           ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
+        } else if (obs.type === 'CRATE') {
+           ctx.fillStyle = '#713f12'; 
+           ctx.strokeStyle = '#451a03';
+           ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
            ctx.beginPath();
-           ctx.moveTo(obs.x, obs.y); ctx.lineTo(obs.x + obs.width, obs.y + obs.height);
-           ctx.moveTo(obs.x + obs.width, obs.y); ctx.lineTo(obs.x, obs.y + obs.height);
+           ctx.moveTo(obs.x, obs.y);
+           ctx.lineTo(obs.x + obs.width, obs.y + obs.height);
+           ctx.moveTo(obs.x + obs.width, obs.y);
+           ctx.lineTo(obs.x, obs.y + obs.height);
            ctx.stroke();
         } else if (obs.type === 'BARREL') {
-           ctx.fillStyle = 'black';
-           ctx.font = '12px Arial'; ctx.textAlign='center';
-           ctx.fillText('TNT', obs.x + obs.width/2, obs.y + obs.height/2 + 4);
+            ctx.fillStyle = '#ef4444';
+            ctx.strokeStyle = '#7f1d1d';
+            ctx.beginPath();
+            ctx.arc(obs.x + obs.width/2, obs.y + obs.height/2, obs.width/2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            // Symbol
+            ctx.fillStyle = '#000';
+            ctx.font = '12px monospace';
+            ctx.fillText('!', obs.x + obs.width/2 - 4, obs.y + obs.height/2 + 4);
         }
       });
 
-      // Update Players
-      playersRef.current.forEach((p, idx) => {
-         if (p.dead) return;
+      // Draw Items
+      itemsRef.current = itemsRef.current.filter(item => {
+          item.life--;
+          if (item.life <= 0) return false;
 
-         const k = keysRef.current;
-         const controls = idx === 0 ? settings.keys : settings.p2Keys;
-         const ctrlState = playerCtrlStatesRef.current[idx];
+          // Wobble
+          const wobble = Math.sin(frameRef.current * 0.1) * 3;
+          
+          ctx.fillStyle = ITEM_STATS[item.type].color;
+          ctx.shadowColor = ctx.fillStyle;
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.arc(item.x, item.y + wobble, ITEM_STATS[item.type].radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+
+          ctx.fillStyle = '#fff';
+          ctx.font = '14px monospace';
+          ctx.fillText(ITEM_STATS[item.type].symbol, item.x - 5, item.y + wobble + 5);
+          
+          return true;
+      });
+
+      // Update & Draw Players
+      playersRef.current.forEach((p, idx) => {
+         if(p.dead) return;
+         const ps = playerStatesRef.current[idx];
          
          // Movement
-         let dx = 0, dy = 0;
-         if (controls.up.some(key => k.has(key))) dy -= 1;
-         if (controls.down.some(key => k.has(key))) dy += 1;
-         if (controls.left.some(key => k.has(key))) dx -= 1;
-         if (controls.right.some(key => k.has(key))) dx += 1;
+         let dx = 0; 
+         let dy = 0;
+         const pKeys = p.playerIndex === 0 ? settings.keys : settings.p2Keys;
+         
+         if (pKeys.up.some(k => keysRef.current.has(k))) dy -= 1;
+         if (pKeys.down.some(k => keysRef.current.has(k))) dy += 1;
+         if (pKeys.left.some(k => keysRef.current.has(k))) dx -= 1;
+         if (pKeys.right.some(k => keysRef.current.has(k))) dx += 1;
 
          if (dx !== 0 || dy !== 0) {
-            const length = Math.sqrt(dx * dx + dy * dy);
-            const ndx = dx / length;
-            const ndy = dy / length;
+            const mag = Math.hypot(dx, dy);
+            dx = (dx / mag) * p.speed;
+            dy = (dy / mag) * p.speed;
             
-            // Update Last Move Angle
-            ctrlState.lastMoveAngle = Math.atan2(ndy, ndx);
-
-            let speed = p.speed;
-            if (rapidFireTimerRef.current > 0) speed *= 1.2;
+            // Collision with obstacles
+            let nextX = p.x + dx;
+            let nextY = p.y + dy;
+            let colX = false;
+            let colY = false;
             
-            const nextX = p.x + ndx * speed;
-            const nextY = p.y + ndy * speed;
+            // Screen bounds
+            if (nextX < p.radius || nextX > CANVAS_WIDTH - p.radius) colX = true;
+            if (nextY < p.radius || nextY > CANVAS_HEIGHT - p.radius) colY = true;
+
+            obstaclesRef.current.forEach(obs => {
+               if (checkRectCollision(nextX, p.y, p.radius, obs)) colX = true;
+               if (checkRectCollision(p.x, nextY, p.radius, obs)) colY = true;
+            });
+
+            if (!colX) p.x += dx;
+            if (!colY) p.y += dy;
             
-            let collidedX = false;
-            let collidedY = false;
-            for (const obs of obstaclesRef.current) {
-               if (checkRectCollision(nextX, p.y, p.radius, obs)) collidedX = true;
-               if (checkRectCollision(p.x, nextY, p.radius, obs)) collidedY = true;
-            }
-            if (!collidedX) p.x = nextX;
-            if (!collidedY) p.y = nextY;
-
-            p.x = Math.max(p.radius, Math.min(CANVAS_WIDTH - p.radius, p.x));
-            p.y = Math.max(p.radius, Math.min(CANVAS_HEIGHT - p.radius, p.y));
-         }
-
-         // Player Logic (Reload, Powerups)
-         const ps = playerStatesRef.current[idx];
-         if (ps.reloadTimer > 0) {
-            ps.reloadTimer--;
-            if (ps.reloadTimer <= 0) {
-               const w = ps.currentWeapon;
-               const stats = WEAPON_STATS[w];
-               const current = ps.ammo[w];
-               if (w === WeaponType.PISTOL) {
-                  current.clip = stats.clipSize;
-               } else {
-                  const needed = stats.clipSize - current.clip;
-                  const amount = Math.min(needed, current.reserve);
-                  current.clip += amount;
-                  current.reserve -= amount;
-               }
+            // Store movement angle for P2/Coop auto-aim fallback
+            if (dx !== 0 || dy !== 0) {
+               playerCtrlStatesRef.current[idx].lastMoveAngle = Math.atan2(dy, dx);
             }
          }
 
-         // Aiming Logic
-         const useMouse = idx === 0 && !isMultiplayer;
-         const isAutoAim = settings.coopControlScheme === 'AUTO_AIM';
-
-         if (useMouse) {
-            // Single Player / P1 Mouse Aim
+         // Aiming
+         if (idx === 0 && !isMultiplayer) {
             p.angle = Math.atan2(mouseRef.current.y - p.y, mouseRef.current.x - p.x);
          } else {
-            // Cooperative / Keyboard Aim
-            if (dx !== 0 || dy !== 0) {
-               // Priority 1: Aim in movement direction
-               p.angle = ctrlState.lastMoveAngle;
-            } else if (isAutoAim) {
-               // Priority 2: Auto-aim when standing still if enabled
+            // Coop / Controller logic
+            if (settings.coopControlScheme === 'AUTO_AIM') {
                const autoAngle = getAutoAimAngle(p);
                if (autoAngle !== null) {
                   p.angle = autoAngle;
+               } else if (dx !== 0 || dy !== 0) {
+                  p.angle = Math.atan2(dy, dx);
                } else {
-                  p.angle = ctrlState.lastMoveAngle;
+                  p.angle = playerCtrlStatesRef.current[idx].lastMoveAngle;
                }
             } else {
-               // Priority 3: Keep last angle
-               p.angle = ctrlState.lastMoveAngle;
+               if (dx !== 0 || dy !== 0) p.angle = Math.atan2(dy, dx);
+               else p.angle = playerCtrlStatesRef.current[idx].lastMoveAngle;
             }
          }
 
-         // Shooting Logic
-         const isShootingKey = controls.shoot && controls.shoot.some(key => k.has(key));
-         const isShootingMouse = useMouse && isMouseDownRef.current;
-
-         let cooldown = WEAPON_STATS[ps.currentWeapon].cooldown;
-         if (rapidFireTimerRef.current > 0) cooldown = Math.ceil(cooldown / 2);
-
-         if ((isShootingKey || isShootingMouse) && frameRef.current - lastShotTimesRef.current[idx] > cooldown) {
-             const w = ps.currentWeapon;
-             const weapon = WEAPON_STATS[w];
-             const ammo = ps.ammo[w];
-
-             if (w === WeaponType.BARREL || w === WeaponType.WALL) {
-                if (ammo.reserve > 0 && frameRef.current - lastShotTimesRef.current[idx] > 30) {
-                   lastShotTimesRef.current[idx] = frameRef.current;
-                   ammo.reserve--;
-                   const placeX = p.x + Math.cos(p.angle) * 40;
-                   const placeY = p.y + Math.sin(p.angle) * 40;
-                   const snapX = Math.round(placeX / 20) * 20;
-                   const snapY = Math.round(placeY / 20) * 20;
-
-                   obstaclesRef.current.push({
-                      id: Math.random().toString(),
-                      x: snapX - 15, y: snapY - 15,
-                      width: 30, height: 30,
-                      type: w === WeaponType.BARREL ? 'BARREL' : 'WALL',
-                      hp: w === WeaponType.BARREL ? 50 : 200
+         // Item Pickup
+         itemsRef.current = itemsRef.current.filter(item => {
+             const dist = Math.hypot(item.x - p.x, item.y - p.y);
+             if (dist < p.radius + ITEM_STATS[item.type].radius) {
+                soundSystem.playPickup(item.type === 'MEDKIT' ? 'health' : item.type === 'AMMO' ? 'ammo' : 'powerup');
+                
+                if (item.type === ItemType.MEDKIT) {
+                   p.hp = Math.min(p.maxHp, p.hp + ITEM_STATS.MEDKIT.heal!);
+                   spawnFloatingText(p.x, p.y, `+${ITEM_STATS.MEDKIT.heal}`, '#22c55e');
+                } else if (item.type === ItemType.AMMO) {
+                   Object.keys(ps.ammo).forEach(k => {
+                      const w = k as WeaponType;
+                      if (w !== WeaponType.BARREL && w !== WeaponType.WALL) {
+                         ps.ammo[w].reserve = Math.min(WEAPON_STATS[w].maxReserve, ps.ammo[w].reserve + WEAPON_STATS[w].clipSize * 2);
+                      }
                    });
-                   soundSystem.playShoot('pistol');
+                   spawnFloatingText(p.x, p.y, "AMMO MAX", '#a8a29e');
+                } else if (item.type === ItemType.NUKE) {
+                   spawnExplosion(CANVAS_WIDTH/2, CANVAS_HEIGHT/2, 1000, 500, p.id);
+                   spawnFloatingText(p.x, p.y, "NUKE!", '#f59e0b');
+                } else if (item.type === ItemType.RAPID_FIRE) {
+                   rapidFireTimerRef.current = ITEM_STATS.RAPID_FIRE.duration!;
+                   spawnFloatingText(p.x, p.y, "RAPID FIRE", '#3b82f6');
+                } else if (item.type === ItemType.DOUBLE_POINTS) {
+                   doublePointsTimerRef.current = ITEM_STATS.DOUBLE_POINTS.duration!;
+                   spawnFloatingText(p.x, p.y, "2X POINTS", '#eab308');
+                } else if (item.type === ItemType.SHIELD) {
+                   shieldTimerRef.current = ITEM_STATS.SHIELD.duration!;
+                   spawnFloatingText(p.x, p.y, "SHIELD", '#8b5cf6');
+                } else if (item.type === ItemType.FREEZE) {
+                   freezeTimerRef.current = ITEM_STATS.FREEZE.duration!;
+                   spawnFloatingText(p.x, p.y, "FREEZE", '#06b6d4');
+                   soundSystem.playFreeze();
                 }
-             } 
-             else if (ps.reloadTimer > 0) {
-                // Reloading...
-             } else if (ammo.clip <= 0) {
-                if (frameRef.current - lastShotTimesRef.current[idx] > 20) {
-                   soundSystem.playEmpty();
-                   lastShotTimesRef.current[idx] = frameRef.current;
-                   reloadWeapon(idx);
-                }
-             } else {
+                return false;
+             }
+             return true;
+         });
+
+         // Shooting
+         const shootKeys = pKeys.shoot || [];
+         const isShooting = idx === 0 && !isMultiplayer ? isMouseDownRef.current || shootKeys.some(k => keysRef.current.has(k)) : shootKeys.some(k => keysRef.current.has(k));
+         
+         if (ps.reloadTimer > 0) ps.reloadTimer--;
+
+         if (isShooting && ps.reloadTimer <= 0 && frameRef.current - lastShotTimesRef.current[idx] > (rapidFireTimerRef.current > 0 ? WEAPON_STATS[ps.currentWeapon].cooldown / 2 : WEAPON_STATS[ps.currentWeapon].cooldown)) {
+             const wStats = WEAPON_STATS[ps.currentWeapon];
+             const ammo = ps.ammo[ps.currentWeapon];
+             
+             if (ammo.clip > 0) {
                 lastShotTimesRef.current[idx] = frameRef.current;
                 ammo.clip--;
                 statsRef.current.shotsFired++;
+                addShake(2);
                 
-                if (w === WeaponType.PISTOL) soundSystem.playShoot('pistol');
-                else if (w === WeaponType.SHOTGUN) soundSystem.playShoot('shotgun');
-                else if (w === WeaponType.FLAMETHROWER) soundSystem.playShoot('flame');
-                else soundSystem.playShoot('pistol');
-
-                if (w === WeaponType.SHOTGUN || w === WeaponType.SNIPER || w === WeaponType.RAILGUN) addShake(5);
-                else addShake(2);
-
-                const weaponLevel = upgrades.weaponLevels?.[w] || 0;
-                const weaponDmgMult = 1 + (weaponLevel * 0.2);
-                const totalDamage = weapon.damage * globalDamageMult * weaponDmgMult;
-
-                const createBullet = (angleOffset: number) => {
-                  const angle = p.angle + angleOffset;
-                  bulletsRef.current.push({
-                    id: Math.random().toString(),
-                    ownerId: p.id,
-                    x: p.x + Math.cos(angle) * 20,
-                    y: p.y + Math.sin(angle) * 20,
-                    vx: Math.cos(angle) * weapon.speed,
-                    vy: Math.sin(angle) * weapon.speed,
-                    damage: totalDamage,
-                    color: rapidFireTimerRef.current > 0 ? '#60a5fa' : weapon.color,
-                    radius: w === WeaponType.FLAMETHROWER ? 4 : (w === WeaponType.RAILGUN ? 5 : 3),
-                    duration: weapon.duration || 1000,
-                    pierce: weapon.pierce || 0
-                  });
+                const fireBullet = (angleOffset: number) => {
+                    const spread = (Math.random() - 0.5) * wStats.spread;
+                    const angle = p.angle + spread + angleOffset;
+                    
+                    bulletsRef.current.push({
+                       id: Math.random().toString(),
+                       ownerId: p.id,
+                       x: p.x + Math.cos(p.angle) * 20,
+                       y: p.y + Math.sin(p.angle) * 20,
+                       vx: Math.cos(angle) * wStats.speed,
+                       vy: Math.sin(angle) * wStats.speed,
+                       damage: wStats.damage * globalDamageMult,
+                       color: wStats.color,
+                       radius: 3,
+                       duration: wStats.duration || 60,
+                       pierce: wStats.pierce || 0
+                    });
                 };
 
-                if (w === WeaponType.SHOTGUN) {
-                   [0, 0.15, -0.15, 0.3, -0.3].forEach(createBullet);
-                } else if (w === WeaponType.UZI) {
-                   createBullet((Math.random() - 0.5) * 0.2);
-                } else if (w === WeaponType.FLAMETHROWER) {
-                   createBullet((Math.random() - 0.5) * 0.2);
+                if (ps.currentWeapon === WeaponType.SHOTGUN) {
+                   for(let i=0; i< (wStats.count || 5); i++) fireBullet(0);
+                   soundSystem.playShoot('shotgun');
+                } else if (ps.currentWeapon === WeaponType.BARREL) {
+                   obstaclesRef.current.push({ id: Math.random().toString(), x: p.x, y: p.y, width: 20, height: 20, type: 'BARREL', hp: 50 });
+                   spawnFloatingText(p.x, p.y, "PLACED", "#fff");
+                } else if (ps.currentWeapon === WeaponType.WALL) {
+                   obstaclesRef.current.push({ id: Math.random().toString(), x: p.x, y: p.y, width: 30, height: 10, type: 'WALL' });
+                   spawnFloatingText(p.x, p.y, "BUILT", "#fff");
                 } else {
-                   createBullet(0);
+                   fireBullet(0);
+                   soundSystem.playShoot(ps.currentWeapon === WeaponType.FLAMETHROWER ? 'flame' : 'pistol');
+                }
+
+             } else {
+                if (ps.reloadTimer === 0 && ammo.reserve > 0) {
+                   reloadWeapon(idx);
+                } else if (frameRef.current % 30 === 0) {
+                   soundSystem.playEmpty();
+                   spawnFloatingText(p.x, p.y, "RELOAD!", "#ff0000");
                 }
              }
          }
-      });
-
-      // Check Game Over
-      if (playersRef.current.every(p => p.dead)) {
-         onGameOver(statsRef.current, 'defeat');
-      }
-
-      // Powerups Tick
-      if (rapidFireTimerRef.current > 0) rapidFireTimerRef.current--;
-      if (doublePointsTimerRef.current > 0) doublePointsTimerRef.current--;
-      if (shieldTimerRef.current > 0) shieldTimerRef.current--;
-      if (freezeTimerRef.current > 0) freezeTimerRef.current--;
-
-      // Update Bullets
-      for (let i = bulletsRef.current.length - 1; i >= 0; i--) {
-         const b = bulletsRef.current[i];
-         b.x += b.vx; b.y += b.vy; b.duration--;
-         let destroyed = false;
-
-         if (b.x < 0 || b.x > CANVAS_WIDTH || b.y < 0 || b.y > CANVAS_HEIGHT) destroyed = true;
-         if (b.duration <= 0 && !destroyed) destroyed = true;
-
-         if (!destroyed) {
-            for (const obs of obstaclesRef.current) {
-               if (checkRectCollision(b.x, b.y, b.radius, obs)) {
-                  if ((obs.type === 'CRATE' || obs.type === 'BARREL') && obs.hp !== undefined) {
-                     obs.hp -= b.damage;
-                     spawnFloatingText(obs.x + obs.width/2, obs.y, Math.ceil(b.damage).toString(), 'orange', 10);
-                     if (obs.hp <= 0) {
-                        if (obs.type === 'BARREL') {
-                           spawnExplosion(obs.x+15, obs.y+15, 100, 150, b.ownerId);
-                        } else {
-                           soundSystem.playShoot('shotgun'); 
-                           spawnItem(obs.x+obs.width/2, obs.y+obs.height/2);
-                           spawnBlood(obs.x+obs.width/2, obs.y+obs.height/2, '#854d0e', 8);
-                        }
-                        const idx = obstaclesRef.current.indexOf(obs);
-                        if (idx > -1) obstaclesRef.current.splice(idx, 1);
-                     }
-                  }
-                  destroyed = true;
-                  if (b.pierce && b.pierce > 0 && obs.type !== 'WALL') destroyed = false; // Pierce through crates
-                  if (obs.type === 'WALL') destroyed = true;
-                  break;
-               }
-            }
-         }
-
-         if (destroyed) { bulletsRef.current.splice(i, 1); continue; }
-
-         // Enemy Hit Logic
-         let hitCount = 0;
-         const maxHits = 1 + (b.pierce || 0);
-
-         for (let j = enemiesRef.current.length - 1; j >= 0; j--) {
-            const enemy = enemiesRef.current[j];
-            if (Math.hypot(b.x - enemy.x, b.y - enemy.y) < enemy.radius + b.radius) {
-               enemy.hp -= b.damage;
-               spawnBlood(enemy.x, enemy.y, '#166534');
-               statsRef.current.shotsHit++;
-               soundSystem.playEnemyHit();
-               spawnFloatingText(enemy.x, enemy.y, Math.ceil(b.damage).toString(), 'white', 12);
-               hitCount++;
-               if (hitCount >= maxHits) {
-                  bulletsRef.current.splice(i, 1);
-                  break;
-               }
-            }
-         }
-      }
-
-      // Update Enemies
-      if (waveStateRef.current === 'SPAWNING' && enemiesToSpawnRef.current > 0) {
-         spawnTimerRef.current++;
-         let currentSpawnRate = Math.max(30, level.spawnRate - (waveRef.current * 5));
-         if (gameMode === GameMode.TIME_ATTACK) currentSpawnRate = 40; 
-
-         if (spawnTimerRef.current > currentSpawnRate) {
-           spawnTimerRef.current = 0;
-           if (gameMode !== GameMode.TIME_ATTACK) enemiesToSpawnRef.current--;
-           
-           const isBoss = level.isBossLevel && waveRef.current === 5;
-           let type = isBoss ? EnemyType.BOSS : EnemyType.NORMAL;
-           
-           if (!isBoss) {
-              const types = level.enemyTypes;
-              const rand = Math.random();
-              if (types.includes(EnemyType.MUMMY) && rand > 0.85) type = EnemyType.MUMMY;
-              else if (types.includes(EnemyType.EXPLODER) && rand > 0.75) type = EnemyType.EXPLODER;
-              else if (types.includes(EnemyType.SPITTER) && rand > 0.65) type = EnemyType.SPITTER;
-              else if (types.includes(EnemyType.RED) && rand > 0.50) type = EnemyType.RED;
-           }
-           
-           const stats = ENEMY_STATS[type];
-           const edge = Math.floor(Math.random() * 4);
-           let ex = 0, ey = 0;
-           if (edge === 0) { ex = Math.random() * CANVAS_WIDTH; ey = -50; }
-           else if (edge === 1) { ex = CANVAS_WIDTH + 50; ey = Math.random() * CANVAS_HEIGHT; }
-           else if (edge === 2) { ex = Math.random() * CANVAS_WIDTH; ey = CANVAS_HEIGHT + 50; }
-           else { ex = -50; ey = Math.random() * CANVAS_HEIGHT; }
-
-           let hpMultiplier = diffMod.hp;
-           if (gameMode === GameMode.ENDLESS) hpMultiplier += (waveRef.current * 0.2);
-
-           enemiesRef.current.push({
-             id: Math.random().toString(),
-             x: ex, y: ey,
-             type: type,
-             radius: stats.radius,
-             color: stats.color,
-             speed: stats.speed * diffMod.speed,
-             angle: 0,
-             hp: stats.hp * hpMultiplier,
-             maxHp: stats.hp * hpMultiplier
-           });
-         }
-      }
-
-      for (let i = enemiesRef.current.length - 1; i >= 0; i--) {
-         const enemy = enemiesRef.current[i];
          
-         let target = playersRef.current[0];
-         let minDist = 999999;
-         playersRef.current.forEach(p => {
-            if (p.dead) return;
-            const d = Math.hypot(p.x - enemy.x, p.y - enemy.y);
-            if (d < minDist) {
-               minDist = d;
-               target = p;
-            }
-         });
-
-         if (freezeTimerRef.current <= 0 && enemy.type !== EnemyType.BOSS) {
-             const angle = Math.atan2(target.y - enemy.y, target.x - enemy.x);
-             enemy.angle = angle;
-             
-             let speed = enemy.speed;
-             if (enemy.type === EnemyType.SPITTER && minDist < 300) {
-                speed = 0; 
-                enemy.attackTimer = (enemy.attackTimer || 0) + 1;
-                if (enemy.attackTimer > 120) {
-                   enemy.attackTimer = 0;
-                   enemyBulletsRef.current.push({
-                      id: Math.random().toString(), ownerId: enemy.id,
-                      x: enemy.x, y: enemy.y, vx: Math.cos(angle)*4, vy: Math.sin(angle)*4,
-                      damage: 15 * diffMod.damage, color: '#8b5cf6', radius: 6, duration: 200, isEnemy: true
-                   });
-                }
-             }
-
-             if (speed > 0) {
-                const nx = enemy.x + Math.cos(angle) * speed;
-                const ny = enemy.y + Math.sin(angle) * speed;
-                let collided = false;
-                for(const obs of obstaclesRef.current) {
-                   if(checkRectCollision(nx, ny, enemy.radius, obs)) { collided = true; break; }
-                }
-                if(!collided) { enemy.x = nx; enemy.y = ny; }
-             }
+         if (ps.reloadTimer === 1) {
+            // Finish Reload
+            const w = ps.currentWeapon;
+            const need = WEAPON_STATS[w].clipSize - ps.ammo[w].clip;
+            const take = w === WeaponType.PISTOL ? need : Math.min(need, ps.ammo[w].reserve);
+            ps.ammo[w].clip += take;
+            if (w !== WeaponType.PISTOL) ps.ammo[w].reserve -= take;
          }
 
-         if (enemy.type === EnemyType.BOSS) {
-             if (!enemy.enraged && enemy.hp < enemy.maxHp * 0.5) {
-                 enemy.enraged = true; enemy.speed *= 1.6; enemy.color = '#ff0000';
-                 spawnFloatingText(enemy.x, enemy.y, "ENRAGED!", "#ff0000", 40);
-                 addShake(20);
-             }
-             if (frameRef.current % 300 === 0) {
-                 for(let k=0;k<3;k++) enemiesRef.current.push({
-                     id: Math.random().toString(), x: enemy.x, y: enemy.y, type: EnemyType.NORMAL,
-                     radius: 15, color: '#4ade80', speed: 2, angle: 0, hp: 30, maxHp: 30
-                 });
-             }
-         }
-
-         playersRef.current.forEach(p => {
-            if (p.dead) return;
-            if (Math.hypot(p.x - enemy.x, p.y - enemy.y) < p.radius + enemy.radius) {
-               if (enemy.type === EnemyType.EXPLODER) {
-                  enemy.hp = 0; 
-               } else if (frameRef.current % 30 === 0 && shieldTimerRef.current <= 0) {
-                  p.hp -= 10 * diffMod.damage;
-                  spawnFloatingText(p.x, p.y, "-10", "red");
-                  addShake(5);
-                  spawnBlood(p.x, p.y, '#ef4444');
-                  if (p.hp <= 0) p.dead = true;
-               }
-            }
-         });
-
-         if (enemy.hp <= 0) {
-            let s = ENEMY_STATS[enemy.type!].score * diffMod.score;
-            if (doublePointsTimerRef.current > 0) s *= 2;
-            scoreRef.current += s;
-            statsRef.current.score = scoreRef.current;
-            statsRef.current.kills++;
-            
-            comboRef.current.count++;
-            comboRef.current.timer = 120;
-            checkComboUnlocks();
-
-            if (enemy.type === EnemyType.EXPLODER) {
-               spawnExplosion(enemy.x, enemy.y, 80, 50, 'enemy');
-            }
-
-            spawnItem(enemy.x, enemy.y);
-            enemiesRef.current.splice(i, 1);
-         }
-      }
-
-      for (let i = enemyBulletsRef.current.length - 1; i >= 0; i--) {
-         const b = enemyBulletsRef.current[i];
-         b.x += b.vx; b.y += b.vy; b.duration--;
-         let destroyed = false;
-         for(const obs of obstaclesRef.current) {
-            if(checkRectCollision(b.x, b.y, b.radius, obs)) { destroyed = true; break; }
-         }
-         if (!destroyed) {
-            playersRef.current.forEach(p => {
-               if (!p.dead && Math.hypot(p.x - b.x, p.y - b.y) < p.radius + b.radius) {
-                  if (shieldTimerRef.current <= 0) {
-                     p.hp -= b.damage;
-                     if (p.hp <= 0) p.dead = true;
-                  }
-                  destroyed = true;
-               }
-            });
-         }
-         if (destroyed || b.duration <= 0) enemyBulletsRef.current.splice(i, 1);
-      }
-
-      for (let i = itemsRef.current.length - 1; i >= 0; i--) {
-         const item = itemsRef.current[i];
-         item.life--;
-         let picked = false;
-         playersRef.current.forEach((p, pIdx) => {
-            if (p.dead) return;
-            if (Math.hypot(p.x - item.x, p.y - item.y) < p.radius + 15) {
-               const stats = ITEM_STATS[item.type];
-               spawnFloatingText(p.x, p.y - 30, stats.symbol, stats.color, 20);
-               
-               if (item.type === ItemType.MEDKIT) p.hp = Math.min(p.maxHp, p.hp + stats.heal!);
-               else if (item.type === ItemType.AMMO) {
-                  const ps = playerStatesRef.current[pIdx];
-                  Object.keys(ps.ammo).forEach(k => {
-                     const w = k as WeaponType;
-                     ps.ammo[w].reserve = Math.min(WEAPON_STATS[w].maxReserve, ps.ammo[w].reserve + WEAPON_STATS[w].clipSize * 2);
-                  });
-               }
-               else if (item.type === ItemType.NUKE) enemiesRef.current.forEach(e => e.hp = 0);
-               else if (item.type === ItemType.RAPID_FIRE) rapidFireTimerRef.current = stats.duration!;
-               else if (item.type === ItemType.DOUBLE_POINTS) doublePointsTimerRef.current = stats.duration!;
-               else if (item.type === ItemType.SHIELD) shieldTimerRef.current = stats.duration!;
-               else if (item.type === ItemType.FREEZE) freezeTimerRef.current = stats.duration!;
-               
-               soundSystem.playPickup('powerup');
-               picked = true;
-            }
-         });
-         if (picked || item.life <= 0) itemsRef.current.splice(i, 1);
-      }
-
-      // Render Entities
-      playersRef.current.forEach(p => {
-         if (p.dead) return;
+         // Draw Player
          ctx.save();
          ctx.translate(p.x, p.y);
-         if (shieldTimerRef.current > 0) {
-            ctx.strokeStyle = 'cyan'; ctx.beginPath(); ctx.arc(0, 0, p.radius+5, 0, Math.PI*2); ctx.stroke();
-         }
          ctx.rotate(p.angle);
-         ctx.fillStyle = p.color;
-         ctx.beginPath(); ctx.arc(0, 0, p.radius, 0, Math.PI*2); ctx.fill();
-         ctx.fillStyle = '#333'; ctx.fillRect(0, -4, 25, 8); // gun
-         ctx.restore();
-      });
-
-      enemiesRef.current.forEach(e => {
-         ctx.save();
-         ctx.translate(e.x, e.y);
-         ctx.rotate(e.angle);
-         ctx.fillStyle = freezeTimerRef.current > 0 ? '#06b6d4' : e.color;
-         ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI*2); ctx.fill();
-         if (e.hp < e.maxHp) {
-            ctx.fillStyle = 'red'; ctx.fillRect(-15, -e.radius-10, 30, 4);
-            ctx.fillStyle = 'lime'; ctx.fillRect(-15, -e.radius-10, 30 * (e.hp/e.maxHp), 4);
+         
+         // Legs
+         if (dx !== 0 || dy !== 0) {
+             const walk = Math.sin(frameRef.current * 0.3) * 5;
+             ctx.fillStyle = '#333';
+             ctx.fillRect(-8, -8 + walk, 6, 6);
+             ctx.fillRect(-8, 2 - walk, 6, 6);
          }
+
+         // Body
+         ctx.fillStyle = p.color;
+         ctx.beginPath();
+         ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
+         ctx.fill();
+         // Shield overlay
+         if (shieldTimerRef.current > 0) {
+            ctx.strokeStyle = '#8b5cf6';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+         }
+
+         // Arms/Weapon
+         ctx.fillStyle = '#000';
+         ctx.fillRect(0, -4, 18, 8); // Gun
+         
          ctx.restore();
       });
 
-      bulletsRef.current.forEach(b => { ctx.fillStyle=b.color; ctx.beginPath(); ctx.arc(b.x,b.y,b.radius,0,Math.PI*2); ctx.fill(); });
-      particlesRef.current.forEach(p => { ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); });
-      floatingTextsRef.current.forEach(t => { ctx.fillStyle=t.color; ctx.fillText(t.text, t.x, t.y); });
-      itemsRef.current.forEach(i => { ctx.fillStyle=ITEM_STATS[i.type].color; ctx.fillRect(i.x-5,i.y-5,10,10); });
+      // 5. Enemies
+      // Spawn
+      if (waveStateRef.current === 'SPAWNING' && enemiesToSpawnRef.current > 0) {
+          spawnTimerRef.current--;
+          if (spawnTimerRef.current <= 0) {
+              const spawnDist = 400;
+              const angle = Math.random() * Math.PI * 2;
+              const type = level.enemyTypes[Math.floor(Math.random() * level.enemyTypes.length)];
+              const stats = ENEMY_STATS[type];
+              
+              // Boss logic
+              const isBoss = gameMode === GameMode.CAMPAIGN && level.isBossLevel && waveRef.current === 5 && enemiesToSpawnRef.current === 1;
+              const finalType = isBoss ? EnemyType.BOSS : type;
+              const finalStats = ENEMY_STATS[finalType];
+
+              enemiesRef.current.push({
+                  id: Math.random().toString(),
+                  x: playersRef.current[0].x + Math.cos(angle) * spawnDist,
+                  y: playersRef.current[0].y + Math.sin(angle) * spawnDist,
+                  radius: finalStats.radius,
+                  color: finalStats.color,
+                  speed: finalStats.speed * diffMod.speed * (freezeTimerRef.current > 0 ? 0.5 : 1),
+                  angle: 0,
+                  hp: finalStats.hp * diffMod.hp,
+                  maxHp: finalStats.hp * diffMod.hp,
+                  type: finalType,
+                  score: finalStats.score
+              });
+              enemiesToSpawnRef.current--;
+              spawnTimerRef.current = level.spawnRate / (rapidFireTimerRef.current > 0 ? 2 : 1); // Spawn faster if player is OP
+          }
+      }
+
+      // Enemy Logic
+      enemiesRef.current = enemiesRef.current.filter(e => {
+         // Find target
+         let target = playersRef.current[0];
+         let minDist = 9999;
+         playersRef.current.forEach(p => {
+            if (!p.dead) {
+               const d = Math.hypot(p.x - e.x, p.y - e.y);
+               if (d < minDist) { minDist = d; target = p; }
+            }
+         });
+
+         if (target && !target.dead) {
+            const angle = Math.atan2(target.y - e.y, target.x - e.x);
+            e.angle = angle;
+            
+            let spd = e.speed;
+            if (freezeTimerRef.current > 0) spd *= 0.5;
+
+            const vx = Math.cos(angle) * spd;
+            const vy = Math.sin(angle) * spd;
+            
+            // Simple collision avoidance
+            let pushX = 0, pushY = 0;
+            enemiesRef.current.forEach(other => {
+               if (other === e) return;
+               const dx = e.x - other.x;
+               const dy = e.y - other.y;
+               const dist = Math.hypot(dx, dy);
+               if (dist < e.radius + other.radius) {
+                  pushX += dx / dist;
+                  pushY += dy / dist;
+               }
+            });
+
+            e.x += vx + pushX * 0.1;
+            e.y += vy + pushY * 0.1;
+
+            // Collision with Player
+            if (minDist < e.radius + target.radius) {
+               if (shieldTimerRef.current <= 0) {
+                  if (frameRef.current % 30 === 0) { // dps throttle
+                     const dmg = 10 * diffMod.damage;
+                     target.hp -= dmg;
+                     statsRef.current.damageTaken += dmg;
+                     spawnFloatingText(target.x, target.y, `-${Math.ceil(dmg)}`, '#ef4444');
+                     spawnBlood(target.x, target.y, '#ef4444');
+                     soundSystem.playPlayerHit();
+                     addShake(5);
+                     
+                     if (target.hp <= 0) {
+                        target.dead = true;
+                        target.hp = 0;
+                        target.respawnTimer = 300; // 5 seconds auto respawn timer
+                        // Check all dead
+                        if (playersRef.current.every(p => p.dead)) {
+                           onGameOver(statsRef.current, 'defeat');
+                        }
+                     }
+                  }
+               }
+            }
+         }
+
+         // Draw Enemy
+         ctx.fillStyle = e.color;
+         ctx.beginPath();
+         ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+         ctx.fill();
+         
+         // HP Bar for big enemies
+         if (e.hp < e.maxHp) {
+            ctx.fillStyle = 'red';
+            ctx.fillRect(e.x - 10, e.y - e.radius - 8, 20, 4);
+            ctx.fillStyle = 'green';
+            ctx.fillRect(e.x - 10, e.y - e.radius - 8, 20 * (e.hp / e.maxHp), 4);
+         }
+
+         return e.hp > 0;
+      });
+
+      // 6. Bullets
+      bulletsRef.current = bulletsRef.current.filter(b => {
+          b.x += b.vx;
+          b.y += b.vy;
+          b.duration--;
+          
+          // Obstacle Collision
+          let hitWall = false;
+          obstaclesRef.current.forEach(obs => {
+             if (checkRectCollision(b.x, b.y, b.radius, obs)) {
+                hitWall = true;
+                if (obs.type === 'CRATE' || obs.type === 'BARREL') {
+                   if (obs.hp) obs.hp -= b.damage;
+                   if (obs.hp! <= 0) {
+                      // Destroy crate
+                      spawnExplosion(obs.x + obs.width/2, obs.y + obs.height/2, 40, 20, b.ownerId);
+                      if (obs.type === 'BARREL') spawnExplosion(obs.x, obs.y, 100, 100, b.ownerId);
+                      spawnItem(obs.x + obs.width/2, obs.y + obs.height/2);
+                      // Remove obs from array (tricky inside loop, modify array directly or mark dead)
+                      // For simplicity, filter obstacles later or assumes obstaclesRef is stable. 
+                      // Actually let's mark for deletion.
+                      obs.width = 0; 
+                      statsRef.current.score += 50;
+                      checkAchievements();
+                   }
+                }
+             }
+          });
+          obstaclesRef.current = obstaclesRef.current.filter(o => o.width > 0);
+
+          if (hitWall || b.x < 0 || b.x > CANVAS_WIDTH || b.y < 0 || b.y > CANVAS_HEIGHT || b.duration <= 0) return false;
+
+          // Enemy Collision
+          let hit = false;
+          enemiesRef.current.forEach(e => {
+             if (hit) return; // Pierce logic needs improvement for multi-hit, simpler here
+             const dist = Math.hypot(e.x - b.x, e.y - b.y);
+             if (dist < e.radius + b.radius) {
+                e.hp -= b.damage;
+                spawnBlood(e.x, e.y, '#10b981'); // Green zombie blood
+                soundSystem.playEnemyHit();
+                spawnFloatingText(e.x, e.y, Math.ceil(b.damage).toString(), '#fff');
+                
+                if (b.pierce && b.pierce > 0) {
+                   b.pierce--;
+                } else {
+                   hit = true;
+                }
+
+                statsRef.current.shotsHit++;
+
+                if (e.hp <= 0) {
+                   statsRef.current.kills++;
+                   const pts = Math.ceil(e.score! * diffMod.score * (doublePointsTimerRef.current > 0 ? 2 : 1));
+                   statsRef.current.score += pts;
+                   scoreRef.current += pts;
+                   spawnFloatingText(e.x, e.y, `+${pts}`, '#eab308', 20);
+                   
+                   // Combo
+                   comboRef.current.count++;
+                   comboRef.current.timer = 120; // 2 seconds
+                   soundSystem.playCombo(comboRef.current.count);
+                   checkComboUnlocks();
+                   
+                   // Chance for item
+                   spawnItem(e.x, e.y);
+                }
+             }
+          });
+          
+          if (hit) return false;
+
+          ctx.fillStyle = b.color;
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          return true;
+      });
+
+      // 7. Particles & Text
+      particlesRef.current = particlesRef.current.filter(p => {
+         p.x += p.vx;
+         p.y += p.vy;
+         p.life--;
+         p.vx *= 0.9;
+         p.vy *= 0.9;
+         
+         ctx.fillStyle = p.color;
+         ctx.globalAlpha = p.life / 30;
+         ctx.beginPath();
+         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+         ctx.fill();
+         ctx.globalAlpha = 1;
+         return p.life > 0;
+      });
+
+      floatingTextsRef.current = floatingTextsRef.current.filter(t => {
+         t.y += t.vy;
+         t.life--;
+         
+         ctx.fillStyle = t.color;
+         ctx.font = `bold ${t.size}px monospace`;
+         ctx.strokeStyle = 'black';
+         ctx.lineWidth = 2;
+         ctx.strokeText(t.text, t.x, t.y);
+         ctx.fillText(t.text, t.x, t.y);
+         return t.life > 0;
+      });
 
       ctx.restore();
+      
+      // Helper to check achievements mid-game
+      const checkAchievements = () => {
+         // handled in onGameOver for efficiency usually, but simple checks can be here
+      };
 
-      const activePs = playerStatesRef.current;
-      const actives = [];
-      if (rapidFireTimerRef.current > 0) actives.push('RAPID');
-      if (doublePointsTimerRef.current > 0) actives.push('2X');
-      if (shieldTimerRef.current > 0) actives.push('SHIELD');
-      if (freezeTimerRef.current > 0) actives.push('FREEZE');
+      // UI State Sync (throttle)
+      if (frameRef.current % 5 === 0) {
+          const activePups = [];
+          if (rapidFireTimerRef.current > 0) activePups.push('RAPID FIRE');
+          if (doublePointsTimerRef.current > 0) activePups.push('2X POINTS');
+          if (shieldTimerRef.current > 0) activePups.push('SHIELD');
+          if (freezeTimerRef.current > 0) activePups.push('FREEZE');
 
-      setUiState({
-         hp: playersRef.current.map(p => p.hp),
-         score: scoreRef.current,
-         wave: waveRef.current,
-         waveState: waveStateRef.current,
-         intermissionTime: Math.ceil(intermissionTimerRef.current / 60),
-         weapon: activePs.map(ps => ps.currentWeapon),
-         clip: activePs.map(ps => ps.ammo[ps.currentWeapon].clip),
-         reserve: activePs.map(ps => ps.ammo[ps.currentWeapon].reserve),
-         isReloading: activePs.map(ps => ps.reloadTimer > 0),
-         combo: comboRef.current.count,
-         timeAttackTime: Math.ceil(timeAttackTimerRef.current / 60),
-         activePowerups: actives
-      });
-
+          setUiState({
+             hp: playersRef.current.map(p => p.hp),
+             score: statsRef.current.score,
+             wave: waveRef.current,
+             waveState: waveStateRef.current,
+             intermissionTime: Math.ceil(intermissionTimerRef.current / 60),
+             weapon: playerStatesRef.current.map(ps => ps.currentWeapon),
+             clip: playerStatesRef.current.map(ps => ps.ammo[ps.currentWeapon]?.clip || 0),
+             reserve: playerStatesRef.current.map(ps => ps.ammo[ps.currentWeapon]?.reserve || 0),
+             isReloading: playerStatesRef.current.map(ps => ps.reloadTimer > 0),
+             combo: comboRef.current.count,
+             timeAttackTime: Math.ceil(timeAttackTimerRef.current / 60),
+             activePowerups: activePups,
+             respawnTimers: playersRef.current.map(p => p.respawnTimer || 0)
+          });
+      }
+      
       frameRef.current++;
       animationFrameId = requestAnimationFrame(gameLoop);
     };
 
     animationFrameId = requestAnimationFrame(gameLoop);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mouseup', handleMouseUp);
-      cancelAnimationFrame(animationFrameId);
+       window.removeEventListener('keydown', handleKeyDown);
+       window.removeEventListener('keyup', handleKeyUp);
+       window.removeEventListener('mousemove', handleMouseMove);
+       window.removeEventListener('mousedown', handleMouseDown);
+       window.removeEventListener('mouseup', handleMouseUp);
+       cancelAnimationFrame(animationFrameId);
     };
-  }, [level, settings, upgrades, gameMode, onGameOver, isPaused, onRestart, onExit, isMultiplayer]);
+  }, [level, settings, upgrades, gameMode, onGameOver, isPaused]); 
+
+  // Calculate UI health bar width
+  const getHpPercent = (current: number, max: number) => Math.max(0, (current / max) * 100);
 
   return (
-    <div className="relative">
-       <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="block border-4 border-zinc-800 bg-black rounded shadow-2xl cursor-crosshair mx-auto"/>
+    <div className="relative w-full h-full flex justify-center items-center bg-black">
+       <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="bg-zinc-900 shadow-2xl cursor-crosshair" />
        
-       {uiState.waveState === 'INTERMISSION' && gameMode !== GameMode.TIME_ATTACK && (
-         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-             <div className="bg-black/70 p-6 rounded text-center border-y-4 border-green-600 w-full backdrop-blur-sm">
-               <h3 className="text-4xl font-bold text-green-500 mb-2">WAVE {uiState.wave} CLEARED</h3>
-               <p className="text-white text-xl animate-pulse">NEXT WAVE IN {uiState.intermissionTime}...</p>
-             </div>
-         </div>
-       )}
-
-       <div className="absolute top-4 left-0 w-full px-4 flex justify-between pointer-events-none">
-          <div className="flex flex-col gap-1">
-             <div className="flex items-center gap-2 bg-black/60 p-2 rounded border border-blue-900 text-blue-400">
-                <User size={20} /> P1
-                <div className="w-32 h-3 bg-zinc-800 rounded overflow-hidden">
-                   <div className="h-full bg-blue-500" style={{width: `${Math.max(0, uiState.hp[0])}%`}}></div>
+       {/* HUD OVERLAY */}
+       <div className="absolute top-0 left-0 w-full h-full pointer-events-none p-4 flex flex-col justify-between" style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
+          
+          {/* TOP BAR */}
+          <div className="flex justify-between items-start">
+             {/* P1 STATUS */}
+             <div className="bg-black/50 p-2 border border-blue-500/50 rounded w-64 backdrop-blur-sm">
+                <div className="flex justify-between mb-1">
+                   <span className="text-blue-400 font-bold">P1</span>
+                   <span className="text-white">
+                     {uiState.hp[0] > 0 
+                       ? `${Math.ceil(uiState.hp[0])} HP` 
+                       : (uiState.respawnTimers[0] > 0 ? `REVIVE IN ${Math.ceil(uiState.respawnTimers[0]/60)}` : 'KIA')}
+                   </span>
+                </div>
+                <div className="h-3 bg-zinc-800 w-full rounded overflow-hidden mb-2">
+                   <div className="h-full bg-green-500 transition-all duration-200" style={{ width: `${getHpPercent(uiState.hp[0], maxHp)}%` }}/>
+                </div>
+                <div className="flex items-center gap-2 text-yellow-500">
+                   <Crosshair size={16} />
+                   <span className="text-lg font-bold">{uiState.weapon[0]}</span>
+                   <span className="ml-auto text-white">
+                      {uiState.isReloading[0] ? 'RLD' : `${uiState.clip[0]} / ${uiState.reserve[0]}`}
+                   </span>
                 </div>
              </div>
-             <div className="bg-black/60 p-2 rounded border border-zinc-700 text-white">
-                <div className="text-yellow-400 text-xl">{uiState.weapon[0]}</div>
-                <div className="text-2xl font-bold">{uiState.isReloading[0] ? 'RLD' : uiState.clip[0]} <span className="text-sm text-zinc-400">/ {uiState.reserve[0]}</span></div>
+
+             {/* GAME INFO */}
+             <div className="text-center">
+                <div className="text-4xl font-bold text-white drop-shadow-md">{uiState.score.toLocaleString()}</div>
+                {gameMode === GameMode.TIME_ATTACK ? (
+                   <div className="text-red-500 text-2xl font-mono flex items-center justify-center gap-2">
+                      <Clock /> {Math.floor(uiState.timeAttackTime / 60)}:{(uiState.timeAttackTime % 60).toString().padStart(2, '0')}
+                   </div>
+                ) : (
+                   <div className="text-zinc-400 text-xl">
+                      {uiState.waveState === 'INTERMISSION' ? <span className="text-green-400 animate-pulse">NEXT WAVE IN {uiState.intermissionTime}</span> : `WAVE ${uiState.wave}`}
+                   </div>
+                )}
+                {uiState.combo > 1 && (
+                   <div className="text-yellow-500 text-3xl font-black animate-bounce mt-2">
+                      {uiState.combo}x COMBO!
+                   </div>
+                )}
              </div>
+
+             {/* P2 STATUS (If Coop) */}
+             {isMultiplayer ? (
+                <div className="bg-black/50 p-2 border border-orange-500/50 rounded w-64 backdrop-blur-sm">
+                   <div className="flex justify-between mb-1">
+                      <span className="text-orange-400 font-bold">P2</span>
+                      <span className="text-white">
+                        {uiState.hp[1] > 0 
+                          ? `${Math.ceil(uiState.hp[1])} HP` 
+                          : (uiState.respawnTimers[1] > 0 ? `REVIVE IN ${Math.ceil(uiState.respawnTimers[1]/60)}` : 'KIA')}
+                      </span>
+                   </div>
+                   <div className="h-3 bg-zinc-800 w-full rounded overflow-hidden mb-2">
+                      <div className="h-full bg-green-500 transition-all duration-200" style={{ width: `${getHpPercent(uiState.hp[1], maxHp)}%` }}/>
+                   </div>
+                   <div className="flex items-center gap-2 text-yellow-500">
+                      <Crosshair size={16} />
+                      <span className="text-lg font-bold">{uiState.weapon[1]}</span>
+                      <span className="ml-auto text-white">
+                         {uiState.isReloading[1] ? 'RLD' : `${uiState.clip[1]} / ${uiState.reserve[1]}`}
+                      </span>
+                   </div>
+                </div>
+             ) : (
+                <div className="w-64" /> 
+             )}
           </div>
 
-          <div className="flex flex-col items-center">
-             <div className="bg-black/60 px-4 py-1 rounded border border-zinc-700 text-white font-bold text-xl">
-                SCORE: {uiState.score}
-             </div>
-             {uiState.combo > 1 && <div className="text-yellow-500 font-bold animate-bounce text-2xl mt-2">{uiState.combo}x COMBO</div>}
-             <div className="flex gap-2 mt-1">
-                {uiState.activePowerups.map(p => (
-                   <span key={p} className="bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded text-xs border border-blue-500">{p}</span>
-                ))}
-             </div>
+          {/* BOTTOM BAR */}
+          <div className="flex justify-start items-end gap-2">
+             {uiState.activePowerups.map(p => (
+                <div key={p} className="bg-blue-900/80 text-blue-200 px-3 py-1 rounded border border-blue-400 animate-pulse font-bold">
+                   {p}
+                </div>
+             ))}
           </div>
-
-          {isMultiplayer ? (
-            <div className="flex flex-col gap-1 items-end">
-               <div className="flex items-center gap-2 bg-black/60 p-2 rounded border border-orange-900 text-orange-400">
-                  <div className="w-32 h-3 bg-zinc-800 rounded overflow-hidden">
-                     <div className="h-full bg-orange-500" style={{width: `${Math.max(0, uiState.hp[1] || 0)}%`}}></div>
-                  </div>
-                  P2 <User size={20} />
-               </div>
-               <div className="bg-black/60 p-2 rounded border border-zinc-700 text-white text-right">
-                  <div className="text-yellow-400 text-xl">{uiState.weapon[1]}</div>
-                  <div className="text-2xl font-bold">{uiState.isReloading[1] ? 'RLD' : uiState.clip[1]} <span className="text-sm text-zinc-400">/ {uiState.reserve[1]}</span></div>
-               </div>
-            </div>
-          ) : (
-             <div className="bg-black/60 p-2 rounded border border-zinc-700 text-zinc-300 w-32">
-                <div className="text-sm">WAVE {uiState.wave}</div>
-                {gameMode === GameMode.TIME_ATTACK && <div className="text-xl text-red-400 font-mono">{Math.floor(uiState.timeAttackTime/60)}:{(uiState.timeAttackTime%60).toString().padStart(2,'0')}</div>}
-             </div>
-          )}
        </div>
-
+       
        {isPaused && (
-         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-           <div className="bg-zinc-900 border-2 border-zinc-700 p-8 w-80 text-center shadow-2xl">
-             <h2 className="text-4xl font-bold text-white mb-6 tracking-widest border-b border-zinc-700 pb-4">PAUSED</h2>
-             <div className="space-y-4">
-                <button onClick={() => setIsPaused(false)} className="w-full flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-800 text-green-500 font-bold"><Play size={20} /> RESUME</button>
-                <button onClick={onRestart} className="w-full flex items-center justify-center gap-2 py-3 bg-zinc-800 border border-zinc-600 text-zinc-300 font-bold"><RotateCcw size={20} /> RESTART</button>
-                <button onClick={onExit} className="w-full flex items-center justify-center gap-2 py-3 bg-red-900/20 border border-red-800 text-red-500 font-bold"><Home size={20} /> QUIT</button>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-50">
+             <div className="text-center">
+                <h2 className="text-6xl font-bold text-white mb-4">PAUSED</h2>
+                <button onClick={() => setIsPaused(false)} className="bg-green-600 text-white px-8 py-3 rounded font-bold hover:bg-green-500 flex items-center gap-2 mx-auto mb-2"><Play /> RESUME</button>
+                <button onClick={onRestart} className="bg-yellow-600 text-white px-8 py-3 rounded font-bold hover:bg-yellow-500 flex items-center gap-2 mx-auto mb-2"><RotateCcw /> RESTART</button>
+                <button onClick={onExit} className="bg-red-600 text-white px-8 py-3 rounded font-bold hover:bg-red-500 flex items-center gap-2 mx-auto"><Home /> QUIT TO MENU</button>
              </div>
-           </div>
-         </div>
+          </div>
        )}
     </div>
   );

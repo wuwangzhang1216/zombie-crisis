@@ -212,7 +212,7 @@ const App: React.FC = () => {
 
       <div className="relative" style={{ width: Math.min(window.innerWidth - 32, CANVAS_WIDTH) }}>
         
-        {gameState === GameState.MENU && !showArmory && !showAchievements && !showModeSelect && (
+        {gameState === GameState.MENU && !showArmory && !showAchievements && !showModeSelect && !showSettings && (
           <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-zinc-800 p-8 shadow-2xl relative">
             <div className="absolute top-4 right-4 flex gap-2">
               <button onClick={() => setShowAchievements(true)} className="text-yellow-500 hover:text-white bg-zinc-800 p-2 rounded border border-zinc-700">
@@ -304,158 +304,229 @@ const App: React.FC = () => {
            </div>
         )}
 
+        {/* ARMORY MODAL - REDESIGNED FOR CONSISTENCY & FIX NAVIGATION */}
         {showArmory && (
-          <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-green-900 p-8 shadow-2xl relative max-h-[80vh] overflow-y-auto">
-             <button onClick={() => setShowArmory(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white"><X size={24}/></button>
-             <h2 className="text-3xl text-yellow-500 mb-6 flex items-center gap-3"><ShoppingCart /> ARMORY REQUISITIONS</h2>
-             
-             {/* Player Stats */}
-             <h3 className="text-green-400 text-xl mb-2 border-b border-zinc-700">SUIT UPGRADES</h3>
-             <div className="grid gap-4 mb-8">
-               {['health', 'speed', 'damage'].map((key) => (
-                 <div key={key} className="bg-black p-4 border border-zinc-700 flex justify-between items-center">
-                    <div>
-                       <h3 className="text-xl text-green-400 font-bold flex items-center gap-2">
-                         {key === 'health' && <Shield size={18}/>}
-                         {key === 'damage' && <Crosshair size={18}/>}
-                         {key === 'speed' && <Zap size={18}/>}
-                         {UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].name}
-                       </h3>
-                       <div className="flex gap-1 mt-2">
-                         {[...Array(UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel)].map((_, i) => (
-                           <div key={i} className={`w-8 h-2 rounded ${i < (upgrades[key as keyof PlayerUpgrades] as number) ? 'bg-green-500' : 'bg-zinc-800'}`} />
-                         ))}
-                       </div>
-                    </div>
-                    <button 
-                      onClick={() => buyUpgrade(key as keyof PlayerUpgrades)}
-                      disabled={(upgrades[key as keyof PlayerUpgrades] as number) >= UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel || credits < (getUpgradeCost(key as any) as number)}
-                      className={`px-6 py-2 font-bold border-2 ${
-                        (upgrades[key as keyof PlayerUpgrades] as number) >= UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel 
-                        ? 'border-zinc-700 text-zinc-500' 
-                        : credits >= (getUpgradeCost(key as any) as number) 
-                          ? 'border-yellow-600 text-yellow-500 hover:bg-yellow-900' 
-                          : 'border-red-900 text-red-900'
-                      }`}
-                    >
-                      {(upgrades[key as keyof PlayerUpgrades] as number) >= UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel ? 'MAXED' : `${getUpgradeCost(key as any)} CR`}
-                    </button>
-                 </div>
-               ))}
-             </div>
-
-             {/* Weapon Stats */}
-             <h3 className="text-green-400 text-xl mb-2 border-b border-zinc-700">WEAPON PROFICIENCY (+20% DMG)</h3>
-             <div className="grid gap-4">
-               {Object.values(WeaponType).filter(w => w !== WeaponType.BARREL && w !== WeaponType.WALL).map((w) => {
-                 const level = upgrades.weaponLevels?.[w] || 0;
-                 const cost = WEAPON_UPGRADE_COST * (level + 1);
-                 const isMax = level >= 5;
-
-                 return (
-                   <div key={w} className="bg-black p-4 border border-zinc-700 flex justify-between items-center">
-                     <div>
-                       <h3 className="text-xl text-blue-400 font-bold flex items-center gap-2">
-                         <Swords size={18}/> {w}
-                       </h3>
-                       <div className="flex gap-1 mt-2">
-                         {[...Array(5)].map((_, i) => (
-                           <div key={i} className={`w-8 h-2 rounded ${i < level ? 'bg-blue-500' : 'bg-zinc-800'}`} />
-                         ))}
-                       </div>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur p-4">
+            <div className="w-full max-w-4xl bg-zinc-900 border-4 border-green-900 shadow-2xl flex flex-col max-h-[90vh]">
+               {/* Header */}
+               <div className="flex justify-between items-center p-6 border-b border-green-900/50 bg-zinc-900 shrink-0">
+                  <h2 className="text-3xl text-yellow-500 flex items-center gap-3"><ShoppingCart /> ARMORY REQUISITIONS</h2>
+                  <button onClick={() => setShowArmory(false)} className="text-zinc-400 hover:text-white"><X size={32}/></button>
+               </div>
+               
+               {/* Scrollable Content */}
+               <div className="flex-1 overflow-y-auto p-6">
+                 <h3 className="text-green-400 text-xl mb-2 border-b border-zinc-700">SUIT UPGRADES</h3>
+                 <div className="grid gap-4 mb-8">
+                   {['health', 'speed', 'damage'].map((key) => (
+                     <div key={key} className="bg-black p-4 border border-zinc-700 flex justify-between items-center">
+                        <div>
+                           <h3 className="text-xl text-green-400 font-bold flex items-center gap-2">
+                             {key === 'health' && <Shield size={18}/>}
+                             {key === 'damage' && <Crosshair size={18}/>}
+                             {key === 'speed' && <Zap size={18}/>}
+                             {UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].name}
+                           </h3>
+                           <div className="flex gap-1 mt-2">
+                             {[...Array(UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel)].map((_, i) => (
+                               <div key={i} className={`w-8 h-2 rounded ${i < (upgrades[key as keyof PlayerUpgrades] as number) ? 'bg-green-500' : 'bg-zinc-800'}`} />
+                             ))}
+                           </div>
+                        </div>
+                        <button 
+                          onClick={() => buyUpgrade(key as keyof PlayerUpgrades)}
+                          disabled={(upgrades[key as keyof PlayerUpgrades] as number) >= UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel || credits < (getUpgradeCost(key as any) as number)}
+                          className={`px-6 py-2 font-bold border-2 ${
+                            (upgrades[key as keyof PlayerUpgrades] as number) >= UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel 
+                            ? 'border-zinc-700 text-zinc-500' 
+                            : credits >= (getUpgradeCost(key as any) as number) 
+                              ? 'border-yellow-600 text-yellow-500 hover:bg-yellow-900' 
+                              : 'border-red-900 text-red-900'
+                          }`}
+                        >
+                          {(upgrades[key as keyof PlayerUpgrades] as number) >= UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel ? 'MAXED' : `${getUpgradeCost(key as any)} CR`}
+                        </button>
                      </div>
-                     <button 
-                        onClick={() => buyWeaponUpgrade(w)}
-                        disabled={isMax || credits < cost}
-                        className={`px-6 py-2 font-bold border-2 ${
-                          isMax
-                          ? 'border-zinc-700 text-zinc-500' 
-                          : credits >= cost
-                            ? 'border-yellow-600 text-yellow-500 hover:bg-yellow-900' 
-                            : 'border-red-900 text-red-900'
-                        }`}
-                      >
-                        {isMax ? 'MAXED' : `${cost} CR`}
-                      </button>
-                   </div>
-                 )
-               })}
-             </div>
+                   ))}
+                 </div>
+
+                 <h3 className="text-green-400 text-xl mb-2 border-b border-zinc-700">WEAPON PROFICIENCY (+20% DMG)</h3>
+                 <div className="grid gap-4">
+                   {Object.values(WeaponType).filter(w => w !== WeaponType.BARREL && w !== WeaponType.WALL).map((w) => {
+                     const level = upgrades.weaponLevels?.[w] || 0;
+                     const cost = WEAPON_UPGRADE_COST * (level + 1);
+                     const isMax = level >= 5;
+
+                     return (
+                       <div key={w} className="bg-black p-4 border border-zinc-700 flex justify-between items-center">
+                         <div>
+                           <h3 className="text-xl text-blue-400 font-bold flex items-center gap-2">
+                             <Swords size={18}/> {w}
+                           </h3>
+                           <div className="flex gap-1 mt-2">
+                             {[...Array(5)].map((_, i) => (
+                               <div key={i} className={`w-8 h-2 rounded ${i < level ? 'bg-blue-500' : 'bg-zinc-800'}`} />
+                             ))}
+                           </div>
+                         </div>
+                         <button 
+                            onClick={() => buyWeaponUpgrade(w)}
+                            disabled={isMax || credits < cost}
+                            className={`px-6 py-2 font-bold border-2 ${
+                              isMax
+                              ? 'border-zinc-700 text-zinc-500' 
+                              : credits >= cost
+                                ? 'border-yellow-600 text-yellow-500 hover:bg-yellow-900' 
+                                : 'border-red-900 text-red-900'
+                            }`}
+                          >
+                            {isMax ? 'MAXED' : `${cost} CR`}
+                          </button>
+                       </div>
+                     )
+                   })}
+                 </div>
+               </div>
+
+               {/* Footer */}
+               <div className="p-4 border-t border-green-900/50 bg-black/20 flex justify-end shrink-0">
+                   <button onClick={() => setShowArmory(false)} className="px-8 py-2 bg-zinc-800 hover:bg-zinc-700 text-white font-bold border border-zinc-600">RETURN TO MENU</button>
+               </div>
+            </div>
           </div>
         )}
 
+        {/* ACHIEVEMENTS MODAL - REDESIGNED & FIX NAVIGATION */}
+        {showAchievements && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur p-4">
+            <div className="w-full max-w-4xl bg-zinc-900 border-4 border-yellow-600 shadow-2xl flex flex-col max-h-[90vh]">
+               {/* Header */}
+               <div className="flex justify-between items-center p-6 border-b border-yellow-600/50 bg-zinc-900 shrink-0">
+                  <h2 className="text-3xl text-yellow-500 flex items-center gap-3"><Trophy /> SERVICE RECORD</h2>
+                  <button onClick={() => setShowAchievements(false)} className="text-zinc-400 hover:text-white"><X size={32}/></button>
+               </div>
+
+               {/* Scrollable Content */}
+               <div className="flex-1 overflow-y-auto p-6">
+                 <div className="grid gap-4">
+                   {ACHIEVEMENTS.map((ach) => {
+                     const isUnlocked = unlockedAchievements.includes(ach.id);
+                     return (
+                       <div key={ach.id} className={`p-4 border flex items-center gap-4 ${isUnlocked ? 'bg-black border-yellow-600' : 'bg-zinc-950 border-zinc-800 opacity-60'}`}>
+                          <div className={`p-3 rounded-full ${isUnlocked ? 'bg-yellow-900/30 text-yellow-500' : 'bg-zinc-900 text-zinc-600'}`}>
+                            {getAchievementIcon(ach.icon)}
+                          </div>
+                          <div>
+                            <h3 className={`text-xl font-bold ${isUnlocked ? 'text-yellow-500' : 'text-zinc-500'}`}>{ach.name}</h3>
+                            <p className="text-zinc-400">{ach.description}</p>
+                          </div>
+                          {isUnlocked && <div className="ml-auto text-yellow-500"><Crown size={20} /></div>}
+                       </div>
+                     );
+                   })}
+                 </div>
+               </div>
+               
+               {/* Footer */}
+               <div className="p-4 border-t border-yellow-600/50 bg-black/20 flex justify-end shrink-0">
+                   <button onClick={() => setShowAchievements(false)} className="px-8 py-2 bg-zinc-800 hover:bg-zinc-700 text-white font-bold border border-zinc-600">RETURN TO MENU</button>
+               </div>
+            </div>
+          </div>
+        )}
+
+        {/* SETTINGS MODAL - REDESIGNED TO MATCH OTHERS */}
         {showSettings && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur">
-            <div className="bg-zinc-900 border-2 border-zinc-600 p-8 w-96 shadow-2xl max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-2xl text-white font-bold">SETTINGS</h3>
-                <button onClick={() => setShowSettings(false)} className="text-zinc-500 hover:text-red-500"><X size={24} /></button>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur p-4">
+            <div className="w-full max-w-4xl bg-zinc-900 border-4 border-zinc-600 shadow-2xl flex flex-col max-h-[90vh]">
+              
+              {/* Header */}
+              <div className="flex justify-between items-center p-6 border-b border-zinc-600 bg-zinc-900 shrink-0">
+                <h2 className="text-3xl text-zinc-300 flex items-center gap-3"><SettingsIcon /> SYSTEM CONFIGURATION</h2>
+                <button onClick={() => setShowSettings(false)} className="text-zinc-400 hover:text-red-500"><X size={32} /></button>
               </div>
-              <div className="space-y-6">
-                <div>
-                  <h4 className="text-zinc-400 text-lg mb-3 border-b border-zinc-700 pb-1 flex items-center gap-2"><Volume2 size={18}/> AUDIO</h4>
-                  <div className="space-y-3">
-                    <input type="range" min="0" max="1" step="0.1" value={settings.masterVolume} onChange={(e) => saveSettings({...settings, masterVolume: parseFloat(e.target.value)})} className="w-full accent-green-500" />
-                    <input type="range" min="0" max="1" step="0.1" value={settings.musicVolume} onChange={(e) => saveSettings({...settings, musicVolume: parseFloat(e.target.value)})} className="w-full accent-blue-500" />
-                    <input type="range" min="0" max="1" step="0.1" value={settings.sfxVolume} onChange={(e) => saveSettings({...settings, sfxVolume: parseFloat(e.target.value)})} className="w-full accent-orange-500" />
+
+              {/* Scrollable Content */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                {/* Audio */}
+                <div className="bg-black/30 p-6 border border-zinc-800">
+                  <h4 className="text-zinc-300 text-xl mb-4 border-b border-zinc-700 pb-2 flex items-center gap-2"><Volume2 /> AUDIO LEVELS</h4>
+                  <div className="space-y-6">
+                    <div>
+                       <div className="flex justify-between mb-1 text-zinc-400 text-sm"><span>MASTER</span> <span>{Math.round(settings.masterVolume * 100)}%</span></div>
+                       <input type="range" min="0" max="1" step="0.1" value={settings.masterVolume} onChange={(e) => saveSettings({...settings, masterVolume: parseFloat(e.target.value)})} className="w-full accent-green-500 h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer" />
+                    </div>
+                    <div>
+                       <div className="flex justify-between mb-1 text-zinc-400 text-sm"><span>MUSIC</span> <span>{Math.round(settings.musicVolume * 100)}%</span></div>
+                       <input type="range" min="0" max="1" step="0.1" value={settings.musicVolume} onChange={(e) => saveSettings({...settings, musicVolume: parseFloat(e.target.value)})} className="w-full accent-blue-500 h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer" />
+                    </div>
+                    <div>
+                       <div className="flex justify-between mb-1 text-zinc-400 text-sm"><span>SFX</span> <span>{Math.round(settings.sfxVolume * 100)}%</span></div>
+                       <input type="range" min="0" max="1" step="0.1" value={settings.sfxVolume} onChange={(e) => saveSettings({...settings, sfxVolume: parseFloat(e.target.value)})} className="w-full accent-orange-500 h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer" />
+                    </div>
                   </div>
                 </div>
-                <div>
-                   <h4 className="text-zinc-400 text-lg mb-3 border-b border-zinc-700 pb-1 flex items-center gap-2"><Gauge size={18}/> DIFFICULTY</h4>
-                   <div className="flex gap-2">
-                     {(Object.keys(Difficulty) as Difficulty[]).map(diff => (
-                       <button key={diff} onClick={() => saveSettings({...settings, difficulty: diff})} className={`flex-1 py-1 text-sm font-bold rounded border ${settings.difficulty === diff ? 'bg-green-900 border-green-500 text-green-400' : 'bg-black border-zinc-700 text-zinc-500'}`}>{diff}</button>
-                     ))}
+                
+                {/* Difficulty & Graphics */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <div className="bg-black/30 p-6 border border-zinc-800">
+                       <h4 className="text-zinc-300 text-xl mb-4 border-b border-zinc-700 pb-2 flex items-center gap-2"><Gauge /> DIFFICULTY</h4>
+                       <div className="flex flex-col gap-2">
+                         {(Object.keys(Difficulty) as Difficulty[]).map(diff => (
+                           <button key={diff} onClick={() => saveSettings({...settings, difficulty: diff})} className={`flex-1 py-3 text-sm font-bold rounded border transition-colors ${settings.difficulty === diff ? 'bg-green-900 border-green-500 text-green-400' : 'bg-black border-zinc-700 text-zinc-500 hover:bg-zinc-900'}`}>{diff}</button>
+                         ))}
+                       </div>
+                   </div>
+                   <div className="bg-black/30 p-6 border border-zinc-800">
+                       <h4 className="text-zinc-300 text-xl mb-4 border-b border-zinc-700 pb-2 flex items-center gap-2"><Monitor /> GRAPHICS</h4>
+                       <div className="flex flex-col gap-2">
+                         {['LOW', 'MEDIUM', 'HIGH'].map(opt => (
+                           <button key={opt} onClick={() => saveSettings({...settings, particles: opt as any})} className={`flex-1 py-3 text-sm font-bold rounded border transition-colors ${settings.particles === opt ? 'bg-blue-900 border-blue-500 text-blue-400' : 'bg-black border-zinc-700 text-zinc-500 hover:bg-zinc-900'}`}>{opt}</button>
+                         ))}
+                       </div>
                    </div>
                 </div>
-                <div>
-                   <h4 className="text-zinc-400 text-lg mb-3 border-b border-zinc-700 pb-1 flex items-center gap-2"><Monitor size={18}/> GRAPHICS</h4>
-                  <div className="flex gap-2">
-                     {['LOW', 'MEDIUM', 'HIGH'].map(opt => (
-                       <button key={opt} onClick={() => saveSettings({...settings, particles: opt as any})} className={`flex-1 py-1 text-sm font-bold rounded border ${settings.particles === opt ? 'bg-blue-900 border-blue-500 text-blue-400' : 'bg-black border-zinc-700 text-zinc-500'}`}>{opt}</button>
-                     ))}
+
+                {/* Controls */}
+                <div className="bg-black/30 p-6 border border-zinc-800">
+                   <h4 className="text-zinc-300 text-xl mb-4 border-b border-zinc-700 pb-2 flex items-center gap-2"><Crosshair /> CO-OP CONFIGURATION</h4>
+                   <div className="flex gap-4 mb-4">
+                       <button onClick={() => saveSettings({...settings, coopControlScheme: 'FOLLOW_MOVE'})} className={`flex-1 py-3 text-sm font-bold rounded border ${settings.coopControlScheme === 'FOLLOW_MOVE' ? 'bg-blue-900 border-blue-500 text-blue-400' : 'bg-black border-zinc-700 text-zinc-500'}`}>
+                           MANUAL AIM
+                       </button>
+                       <button onClick={() => saveSettings({...settings, coopControlScheme: 'AUTO_AIM'})} className={`flex-1 py-3 text-sm font-bold rounded border ${settings.coopControlScheme === 'AUTO_AIM' ? 'bg-blue-900 border-blue-500 text-blue-400' : 'bg-black border-zinc-700 text-zinc-500'}`}>
+                           AUTO-AIM
+                       </button>
                    </div>
-                </div>
-                <div>
-                   <h4 className="text-zinc-400 text-lg mb-3 border-b border-zinc-700 pb-1 flex items-center gap-2"><Crosshair size={18}/> CO-OP CONTROLS</h4>
-                   <div className="flex flex-col gap-2">
-                       <div className="flex gap-2">
-                           <button onClick={() => saveSettings({...settings, coopControlScheme: 'FOLLOW_MOVE'})} className={`flex-1 py-2 text-sm font-bold rounded border ${settings.coopControlScheme === 'FOLLOW_MOVE' ? 'bg-blue-900 border-blue-500 text-blue-400' : 'bg-black border-zinc-700 text-zinc-500'}`}>
-                               MANUAL
-                           </button>
-                           <button onClick={() => saveSettings({...settings, coopControlScheme: 'AUTO_AIM'})} className={`flex-1 py-2 text-sm font-bold rounded border ${settings.coopControlScheme === 'AUTO_AIM' ? 'bg-blue-900 border-blue-500 text-blue-400' : 'bg-black border-zinc-700 text-zinc-500'}`}>
-                               AUTO-AIM
-                           </button>
-                       </div>
-                       <p className="text-xs text-zinc-500 text-center h-10">
-                           {settings.coopControlScheme === 'FOLLOW_MOVE' 
-                             ? 'Aim follows movement direction. Stop to lock angle.' 
-                             : 'Aims nearest enemy when standing still. Movement overrides aim.'}
-                       </p>
-                       
-                       <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-zinc-400 bg-black/50 p-2 rounded border border-zinc-800">
-                          <div>
-                            <h5 className="text-blue-400 font-bold mb-1 border-b border-blue-900/30">PLAYER 1</h5>
-                            <div className="grid grid-cols-[40px_1fr] gap-y-1">
-                              <span>MOVE</span> <span className="text-zinc-300">WASD</span>
-                              <span>FIRE</span> <span className="text-zinc-300">SPACE</span>
-                              <span>RLD</span> <span className="text-zinc-300">R</span>
-                              <span>WPN</span> <span className="text-zinc-300">Q / E</span>
-                            </div>
-                          </div>
-                          <div>
-                            <h5 className="text-orange-400 font-bold mb-1 border-b border-orange-900/30">PLAYER 2</h5>
-                            <div className="grid grid-cols-[40px_1fr] gap-y-1">
-                              <span>MOVE</span> <span className="text-zinc-300">ARROWS</span>
-                              <span>FIRE</span> <span className="text-zinc-300">ENTER/0</span>
-                              <span>RLD</span> <span className="text-zinc-300">SHIFT</span>
-                              <span>WPN</span> <span className="text-zinc-300">PGUP/DN</span>
-                            </div>
-                          </div>
-                       </div>
+                   
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-zinc-400">
+                      <div className="bg-black p-4 rounded border border-zinc-800">
+                        <h5 className="text-blue-400 font-bold mb-2 border-b border-blue-900/30">PLAYER 1 (KEYBOARD)</h5>
+                        <div className="grid grid-cols-[80px_1fr] gap-y-2">
+                          <span>MOVE</span> <span className="text-zinc-200 font-mono bg-zinc-800 px-2 rounded w-fit">W A S D</span>
+                          <span>FIRE</span> <span className="text-zinc-200 font-mono bg-zinc-800 px-2 rounded w-fit">SPACE</span>
+                          <span>RELOAD</span> <span className="text-zinc-200 font-mono bg-zinc-800 px-2 rounded w-fit">R</span>
+                          <span>WEAPON</span> <span className="text-zinc-200 font-mono bg-zinc-800 px-2 rounded w-fit">Q / E</span>
+                        </div>
+                      </div>
+                      <div className="bg-black p-4 rounded border border-zinc-800">
+                        <h5 className="text-orange-400 font-bold mb-2 border-b border-orange-900/30">PLAYER 2 (KEYBOARD)</h5>
+                        <div className="grid grid-cols-[80px_1fr] gap-y-2">
+                          <span>MOVE</span> <span className="text-zinc-200 font-mono bg-zinc-800 px-2 rounded w-fit">ARROWS</span>
+                          <span>FIRE</span> <span className="text-zinc-200 font-mono bg-zinc-800 px-2 rounded w-fit">ENTER / 0</span>
+                          <span>RELOAD</span> <span className="text-zinc-200 font-mono bg-zinc-800 px-2 rounded w-fit">SHIFT / .</span>
+                          <span>WEAPON</span> <span className="text-zinc-200 font-mono bg-zinc-800 px-2 rounded w-fit">PG UP/DN</span>
+                        </div>
+                      </div>
                    </div>
                 </div>
               </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-zinc-600 bg-black/20 flex justify-end shrink-0">
+                <button onClick={() => setShowSettings(false)} className="px-8 py-2 bg-zinc-800 hover:bg-zinc-700 text-white font-bold border border-zinc-600">SAVE & CLOSE</button>
+              </div>
+
             </div>
           </div>
         )}
