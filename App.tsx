@@ -1,14 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import GameEngine from './components/GameEngine';
 import BriefingModal from './components/BriefingModal';
 import { GameState, LevelConfig } from './types';
 import { LEVELS, CANVAS_WIDTH } from './constants';
-import { Gamepad2, Skull, Trophy } from 'lucide-react';
+import { Gamepad2, Skull, Trophy, Crown } from 'lucide-react';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
   const [currentLevel, setCurrentLevel] = useState<LevelConfig>(LEVELS[0]);
   const [finalScore, setFinalScore] = useState(0);
+  const [highScore, setHighScore] = useState(0);
+
+  // Load high score on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('zombie_crisis_highscore');
+    if (saved) {
+      setHighScore(parseInt(saved, 10));
+    }
+  }, []);
+
+  const updateHighScore = (score: number) => {
+    if (score > highScore) {
+      setHighScore(score);
+      localStorage.setItem('zombie_crisis_highscore', score.toString());
+    }
+  };
 
   const startGame = (levelId: number) => {
     const level = LEVELS.find(l => l.id === levelId) || LEVELS[0];
@@ -22,6 +38,8 @@ const App: React.FC = () => {
 
   const handleGameOver = (score: number, reason: 'victory' | 'defeat') => {
     setFinalScore(score);
+    updateHighScore(score); // Check and update high score
+    
     if (reason === 'victory') {
       // Check if there is a next level
       const nextLevel = LEVELS.find(l => l.id === currentLevel.id + 1);
@@ -43,7 +61,12 @@ const App: React.FC = () => {
         <h1 className="text-5xl md:text-7xl font-bold text-transparent bg-clip-text bg-gradient-to-b from-red-500 to-red-900 tracking-widest uppercase drop-shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{ fontFamily: 'VT323' }}>
           ZOMBIE CRISIS
         </h1>
-        <p className="text-zinc-500 text-xl tracking-[0.5em]">PROTOCOL 2012</p>
+        <div className="flex items-center justify-center gap-4">
+          <p className="text-zinc-500 text-xl tracking-[0.5em]">PROTOCOL 2012</p>
+        </div>
+        <div className="mt-2 text-yellow-600 font-mono flex items-center justify-center gap-2">
+          <Crown size={16} /> BEST RECORD: {highScore.toString().padStart(6, '0')}
+        </div>
       </div>
 
       {/* Main Content Area */}
@@ -71,7 +94,7 @@ const App: React.FC = () => {
             </div>
             
             <div className="mt-8 text-zinc-600 text-sm text-center">
-              CONTROLS: WASD to Move | MOUSE to Aim & Shoot
+              CONTROLS: WASD to Move | MOUSE to Aim & Shoot | ESC to Pause
             </div>
           </div>
         )}

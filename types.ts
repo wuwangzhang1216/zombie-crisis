@@ -18,6 +18,12 @@ export enum EnemyType {
   MUMMY = 'MUMMY'
 }
 
+export enum ItemType {
+  MEDKIT = 'MEDKIT',
+  NUKE = 'NUKE',
+  RAPID_FIRE = 'RAPID_FIRE'
+}
+
 export interface LevelConfig {
   id: number;
   name: string;
@@ -63,4 +69,13 @@ export interface Particle {
   life: number;
   color: string;
   size: number;
+}
+
+export interface Item {
+  id: string;
+  x: number;
+  y: number;
+  type: ItemType;
+  life: number; // Despawn timer
+  angle: number; // For floating animation
 }

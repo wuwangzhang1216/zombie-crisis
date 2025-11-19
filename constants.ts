@@ -1,4 +1,4 @@
-import { LevelConfig, EnemyType, WeaponType } from './types';
+import { LevelConfig, EnemyType, WeaponType, ItemType } from './types';
 
 export const CANVAS_WIDTH = 800;
 export const CANVAS_HEIGHT = 600;
@@ -46,6 +46,12 @@ export const ENEMY_STATS = {
   [EnemyType.NORMAL]: { hp: 50, speed: 1.5, color: '#4ade80', score: 100, radius: 15 },
   [EnemyType.RED]: { hp: 30, speed: 4.0, color: '#ef4444', score: 200, radius: 12 },
   [EnemyType.MUMMY]: { hp: 200, speed: 0.8, color: '#fde047', score: 500, radius: 20 }
+};
+
+export const ITEM_STATS = {
+  [ItemType.MEDKIT]: { color: '#22c55e', radius: 12, heal: 30, score: 0, chance: 0.05, symbol: '+' },
+  [ItemType.NUKE]: { color: '#f59e0b', radius: 12, heal: 0, score: 1000, chance: 0.01, symbol: '☢' },
+  [ItemType.RAPID_FIRE]: { color: '#3b82f6', radius: 12, heal: 0, score: 0, chance: 0.04, duration: 300, symbol: '⚡' }
 };
 
 export const PLAYER_SPEED = 3.5;
