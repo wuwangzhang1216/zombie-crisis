@@ -203,7 +203,7 @@ const App: React.FC = () => {
         <h1 className="text-6xl md:text-8xl font-bold text-transparent bg-clip-text bg-gradient-to-b from-red-500 to-red-900 tracking-widest uppercase drop-shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{ fontFamily: 'VT323' }}>
           ZOMBIE CRISIS
         </h1>
-        <p className="text-zinc-500 text-2xl tracking-[0.5em]">PROTOCOL 2012</p>
+        <p className="text-zinc-500 text-2xl tracking-[0.5em]">W AXIS 2025</p>
         <div className="mt-2 flex justify-center gap-6 text-yellow-500 font-mono">
           <div className="flex items-center gap-2"><Crown size={16} /> HIGHSCORE: {highScore}</div>
           <div className="flex items-center gap-2 text-green-400"><ShoppingCart size={16} /> CREDITS: {credits}</div>
