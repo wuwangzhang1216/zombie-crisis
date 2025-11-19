@@ -173,12 +173,14 @@ export const DEFAULT_SETTINGS: GameSettings = {
   sfxVolume: 0.7,
   difficulty: Difficulty.NORMAL,
   particles: 'MEDIUM',
+  coopControlScheme: 'FOLLOW_MOVE',
   keys: {
     up: ['KeyW'],
     down: ['KeyS'],
     left: ['KeyA'],
     right: ['KeyD'],
     reload: ['KeyR'],
+    shoot: ['Space'],
     prevWeapon: ['KeyQ'],
     nextWeapon: ['KeyE']
   },
@@ -187,10 +189,10 @@ export const DEFAULT_SETTINGS: GameSettings = {
     down: ['ArrowDown'],
     left: ['ArrowLeft'],
     right: ['ArrowRight'],
-    reload: ['Period', 'NumpadDecimal'],
-    shoot: ['Slash', 'Numpad0', 'ControlRight'],
-    prevWeapon: ['Comma'],
-    nextWeapon: ['Quote']
+    reload: ['ShiftRight', 'NumpadDecimal', 'Period'],
+    shoot: ['Enter', 'Numpad0', 'Return'],
+    prevWeapon: ['PageDown', 'NumpadSubtract', 'Comma'],
+    nextWeapon: ['PageUp', 'NumpadAdd', 'Quote']
   }
 };
 

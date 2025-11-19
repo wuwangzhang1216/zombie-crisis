@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import GameEngine from './components/GameEngine';
 import BriefingModal from './components/BriefingModal';
@@ -383,32 +384,9 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {showAchievements && (
-           <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-yellow-600 p-8 shadow-2xl relative">
-             <button onClick={() => setShowAchievements(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white"><X size={24}/></button>
-             <h2 className="text-3xl text-yellow-500 mb-6 flex items-center gap-3"><Trophy /> SERVICE RECORDS</h2>
-             <div className="grid grid-cols-1 gap-4">
-                {ACHIEVEMENTS.map(ach => {
-                   const isUnlocked = unlockedAchievements.includes(ach.id);
-                   return (
-                     <div key={ach.id} className={`p-4 border ${isUnlocked ? 'border-yellow-500 bg-yellow-900/20' : 'border-zinc-800 bg-black'} flex items-center gap-4`}>
-                        <div className={`p-3 rounded-full ${isUnlocked ? 'bg-yellow-500 text-black' : 'bg-zinc-800 text-zinc-600'}`}>
-                           {isUnlocked ? getAchievementIcon(ach.icon) : <Lock size={20} />}
-                        </div>
-                        <div>
-                           <h3 className={`text-xl font-bold ${isUnlocked ? 'text-yellow-400' : 'text-zinc-600'}`}>{ach.name}</h3>
-                           <p className="text-zinc-500">{ach.description}</p>
-                        </div>
-                     </div>
-                   )
-                })}
-             </div>
-           </div>
-        )}
-
         {showSettings && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur">
-            <div className="bg-zinc-900 border-2 border-zinc-600 p-8 w-96 shadow-2xl">
+            <div className="bg-zinc-900 border-2 border-zinc-600 p-8 w-96 shadow-2xl max-h-[90vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-2xl text-white font-bold">SETTINGS</h3>
                 <button onClick={() => setShowSettings(false)} className="text-zinc-500 hover:text-red-500"><X size={24} /></button>
@@ -436,6 +414,45 @@ const App: React.FC = () => {
                      {['LOW', 'MEDIUM', 'HIGH'].map(opt => (
                        <button key={opt} onClick={() => saveSettings({...settings, particles: opt as any})} className={`flex-1 py-1 text-sm font-bold rounded border ${settings.particles === opt ? 'bg-blue-900 border-blue-500 text-blue-400' : 'bg-black border-zinc-700 text-zinc-500'}`}>{opt}</button>
                      ))}
+                   </div>
+                </div>
+                <div>
+                   <h4 className="text-zinc-400 text-lg mb-3 border-b border-zinc-700 pb-1 flex items-center gap-2"><Crosshair size={18}/> CO-OP CONTROLS</h4>
+                   <div className="flex flex-col gap-2">
+                       <div className="flex gap-2">
+                           <button onClick={() => saveSettings({...settings, coopControlScheme: 'FOLLOW_MOVE'})} className={`flex-1 py-2 text-sm font-bold rounded border ${settings.coopControlScheme === 'FOLLOW_MOVE' ? 'bg-blue-900 border-blue-500 text-blue-400' : 'bg-black border-zinc-700 text-zinc-500'}`}>
+                               MANUAL
+                           </button>
+                           <button onClick={() => saveSettings({...settings, coopControlScheme: 'AUTO_AIM'})} className={`flex-1 py-2 text-sm font-bold rounded border ${settings.coopControlScheme === 'AUTO_AIM' ? 'bg-blue-900 border-blue-500 text-blue-400' : 'bg-black border-zinc-700 text-zinc-500'}`}>
+                               AUTO-AIM
+                           </button>
+                       </div>
+                       <p className="text-xs text-zinc-500 text-center h-10">
+                           {settings.coopControlScheme === 'FOLLOW_MOVE' 
+                             ? 'Aim follows movement direction. Stop to lock angle.' 
+                             : 'Aims nearest enemy when standing still. Movement overrides aim.'}
+                       </p>
+                       
+                       <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-zinc-400 bg-black/50 p-2 rounded border border-zinc-800">
+                          <div>
+                            <h5 className="text-blue-400 font-bold mb-1 border-b border-blue-900/30">PLAYER 1</h5>
+                            <div className="grid grid-cols-[40px_1fr] gap-y-1">
+                              <span>MOVE</span> <span className="text-zinc-300">WASD</span>
+                              <span>FIRE</span> <span className="text-zinc-300">SPACE</span>
+                              <span>RLD</span> <span className="text-zinc-300">R</span>
+                              <span>WPN</span> <span className="text-zinc-300">Q / E</span>
+                            </div>
+                          </div>
+                          <div>
+                            <h5 className="text-orange-400 font-bold mb-1 border-b border-orange-900/30">PLAYER 2</h5>
+                            <div className="grid grid-cols-[40px_1fr] gap-y-1">
+                              <span>MOVE</span> <span className="text-zinc-300">ARROWS</span>
+                              <span>FIRE</span> <span className="text-zinc-300">ENTER/0</span>
+                              <span>RLD</span> <span className="text-zinc-300">SHIFT</span>
+                              <span>WPN</span> <span className="text-zinc-300">PGUP/DN</span>
+                            </div>
+                          </div>
+                       </div>
                    </div>
                 </div>
               </div>

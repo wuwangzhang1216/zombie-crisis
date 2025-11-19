@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import { LevelConfig, Entity, Bullet, Particle, WeaponType, Item, ItemType, GameSettings, EnemyType, FloatingText, GameStats, PlayerUpgrades, GameMode, Obstacle } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, PLAYER_SPEED, PLAYER_RADIUS, PLAYER_MAX_HP, WEAPON_STATS, ENEMY_STATS, ITEM_STATS, DIFFICULTY_MODIFIERS, COMBO_UNLOCK_THRESHOLDS, UPGRADE_CONFIG, TIME_ATTACK_LIMIT } from '../constants';
@@ -57,7 +58,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
     radius: PLAYER_RADIUS,
     color,
     speed: basePlayerSpeed,
-    angle: 0,
+    angle: idx === 0 ? 0 : Math.PI,
     hp: maxHp,
     maxHp: maxHp,
     dead: false,
@@ -66,11 +67,16 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
 
   const playersRef = useRef<Entity[]>([initPlayer(0, 100, '#60a5fa')]);
   
+  // Track player control states (for keyboard aiming persistence)
+  const playerCtrlStatesRef = useRef<{lastMoveAngle: number}[]>([{lastMoveAngle: 0}]);
+
   useEffect(() => {
     if (isMultiplayer && playersRef.current.length === 1) {
-      playersRef.current.push(initPlayer(1, 150, '#f97316'));
+      playersRef.current.push(initPlayer(1, CANVAS_WIDTH - 100, '#f97316'));
+      playerCtrlStatesRef.current.push({lastMoveAngle: Math.PI});
     } else if (!isMultiplayer && playersRef.current.length > 1) {
       playersRef.current = [playersRef.current[0]];
+      playerCtrlStatesRef.current = [playerCtrlStatesRef.current[0]];
     }
   }, [isMultiplayer]);
 
@@ -163,6 +169,25 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
     }
     return Math.ceil(level.baseEnemyCount * 0.5) + (waveIdx * 4);
   };
+
+  const getAutoAimAngle = (player: Entity): number | null => {
+    let closest: Entity | null = null;
+    let minDist = 600;
+    
+    enemiesRef.current.forEach(e => {
+       const d = Math.hypot(e.x - player.x, e.y - player.y);
+       if (d < minDist) {
+          minDist = d;
+          closest = e;
+       }
+    });
+    
+    if (closest) {
+       // @ts-ignore
+       return Math.atan2(closest.y - player.y, closest.x - player.x);
+    }
+    return null;
+  };
   
   useEffect(() => {
     enemiesToSpawnRef.current = getWaveEnemyCount(1);
@@ -182,10 +207,9 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
   };
 
   const spawnExplosion = (x: number, y: number, radius: number, damage: number, ownerId: string) => {
-    soundSystem.playPickup('nuke'); // Use nuke sound for boom
+    soundSystem.playPickup('nuke');
     addShake(15);
     
-    // Visuals
     for(let i=0; i<20; i++) {
       particlesRef.current.push({
         id: Math.random().toString(),
@@ -198,7 +222,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
       });
     }
 
-    // Damage Enemies
     enemiesRef.current.forEach(e => {
        const dist = Math.hypot(e.x - x, e.y - y);
        if (dist < radius) {
@@ -207,11 +230,10 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
        }
     });
 
-    // Damage Players (Friendly Fire is fun)
     playersRef.current.forEach(p => {
        const dist = Math.hypot(p.x - x, p.y - y);
        if (dist < radius && shieldTimerRef.current <= 0) {
-          p.hp -= damage * 0.5; // Reduced self-damage
+          p.hp -= damage * 0.5;
           spawnFloatingText(p.x, p.y, Math.ceil(damage*0.5).toString(), '#ef4444', 20);
           addShake(5);
        }
@@ -268,7 +290,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
               spawnFloatingText(playersRef.current[idx].x, playersRef.current[idx].y - 30, `${unlockWeapon} UNLOCKED!`, '#00ff00', 20);
               soundSystem.playUnlock();
               
-              // Auto switch if better
               if (unlockWeapon !== WeaponType.BARREL && unlockWeapon !== WeaponType.WALL) {
                  ps.currentWeapon = unlockWeapon;
               }
@@ -333,7 +354,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
         if (settings.keys.prevWeapon?.includes(e.code)) switchWeapon(0, 'prev');
         if (settings.keys.nextWeapon?.includes(e.code)) switchWeapon(0, 'next');
 
-        // P2 Controls
         if (isMultiplayer && playerStatesRef.current[1]) {
            if (settings.p2Keys.reload.includes(e.code)) reloadWeapon(1);
            if (settings.p2Keys.prevWeapon?.includes(e.code)) switchWeapon(1, 'prev');
@@ -383,7 +403,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          }
       }
 
-      // Combo Decay
       if (comboRef.current.count > 0) {
         comboRef.current.timer--;
         if (comboRef.current.timer <= 0) {
@@ -391,7 +410,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
         }
       }
 
-      // Wave Logic
       if (waveStateRef.current === 'INTERMISSION') {
          intermissionTimerRef.current--;
          if (intermissionTimerRef.current <= 0) {
@@ -415,7 +433,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
                statsRef.current.waveReached = waveRef.current;
                waveStateRef.current = 'INTERMISSION';
                intermissionTimerRef.current = 180;
-               // Respawn dead players in coop
                playersRef.current.forEach(p => {
                   if (p.dead) {
                      p.dead = false;
@@ -433,13 +450,10 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
       }
 
       // --- UPDATE LOOP ---
-
-      // Clear
       ctx.save();
       ctx.fillStyle = level.background;
       ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-      // Shake
       if (shakeRef.current > 0) {
         const dx = (Math.random() - 0.5) * shakeRef.current;
         const dy = (Math.random() - 0.5) * shakeRef.current;
@@ -448,7 +462,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
         if (shakeRef.current < 0.5) shakeRef.current = 0;
       }
 
-      // Draw Obstacles (Bottom Layer)
+      // Draw Obstacles
       obstaclesRef.current.forEach(obs => {
         if (obs.type === 'WALL' || obs.type === 'BARREL') {
            ctx.fillStyle = obs.type === 'BARREL' ? '#ef4444' : '#374151'; 
@@ -478,6 +492,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
 
          const k = keysRef.current;
          const controls = idx === 0 ? settings.keys : settings.p2Keys;
+         const ctrlState = playerCtrlStatesRef.current[idx];
          
          // Movement
          let dx = 0, dy = 0;
@@ -488,12 +503,17 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
 
          if (dx !== 0 || dy !== 0) {
             const length = Math.sqrt(dx * dx + dy * dy);
-            dx /= length; dy /= length;
+            const ndx = dx / length;
+            const ndy = dy / length;
+            
+            // Update Last Move Angle
+            ctrlState.lastMoveAngle = Math.atan2(ndy, ndx);
+
             let speed = p.speed;
             if (rapidFireTimerRef.current > 0) speed *= 1.2;
             
-            const nextX = p.x + dx * speed;
-            const nextY = p.y + dy * speed;
+            const nextX = p.x + ndx * speed;
+            const nextY = p.y + ndy * speed;
             
             let collidedX = false;
             let collidedY = false;
@@ -504,16 +524,8 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
             if (!collidedX) p.x = nextX;
             if (!collidedY) p.y = nextY;
 
-            // Bounds
             p.x = Math.max(p.radius, Math.min(CANVAS_WIDTH - p.radius, p.x));
             p.y = Math.max(p.radius, Math.min(CANVAS_HEIGHT - p.radius, p.y));
-         }
-
-         // Aiming
-         if (idx === 0) {
-            p.angle = Math.atan2(mouseRef.current.y - p.y, mouseRef.current.x - p.x);
-         } else {
-            if (dx !== 0 || dy !== 0) p.angle = Math.atan2(dy, dx);
          }
 
          // Player Logic (Reload, Powerups)
@@ -535,26 +547,50 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
             }
          }
 
-         // Shooting
-         const shouldShoot = idx === 0 ? isMouseDownRef.current : (controls.shoot && controls.shoot.some(key => k.has(key)));
+         // Aiming Logic
+         const useMouse = idx === 0 && !isMultiplayer;
+         const isAutoAim = settings.coopControlScheme === 'AUTO_AIM';
+
+         if (useMouse) {
+            // Single Player / P1 Mouse Aim
+            p.angle = Math.atan2(mouseRef.current.y - p.y, mouseRef.current.x - p.x);
+         } else {
+            // Cooperative / Keyboard Aim
+            if (dx !== 0 || dy !== 0) {
+               // Priority 1: Aim in movement direction
+               p.angle = ctrlState.lastMoveAngle;
+            } else if (isAutoAim) {
+               // Priority 2: Auto-aim when standing still if enabled
+               const autoAngle = getAutoAimAngle(p);
+               if (autoAngle !== null) {
+                  p.angle = autoAngle;
+               } else {
+                  p.angle = ctrlState.lastMoveAngle;
+               }
+            } else {
+               // Priority 3: Keep last angle
+               p.angle = ctrlState.lastMoveAngle;
+            }
+         }
+
+         // Shooting Logic
+         const isShootingKey = controls.shoot && controls.shoot.some(key => k.has(key));
+         const isShootingMouse = useMouse && isMouseDownRef.current;
+
          let cooldown = WEAPON_STATS[ps.currentWeapon].cooldown;
          if (rapidFireTimerRef.current > 0) cooldown = Math.ceil(cooldown / 2);
 
-         if (shouldShoot && frameRef.current - lastShotTimesRef.current[idx] > cooldown) {
+         if ((isShootingKey || isShootingMouse) && frameRef.current - lastShotTimesRef.current[idx] > cooldown) {
              const w = ps.currentWeapon;
              const weapon = WEAPON_STATS[w];
              const ammo = ps.ammo[w];
 
-             // Logic for Placeables (Barrels/Walls)
              if (w === WeaponType.BARREL || w === WeaponType.WALL) {
                 if (ammo.reserve > 0 && frameRef.current - lastShotTimesRef.current[idx] > 30) {
                    lastShotTimesRef.current[idx] = frameRef.current;
                    ammo.reserve--;
-                   
                    const placeX = p.x + Math.cos(p.angle) * 40;
                    const placeY = p.y + Math.sin(p.angle) * 40;
-                   
-                   // Snap to grid-ish
                    const snapX = Math.round(placeX / 20) * 20;
                    const snapY = Math.round(placeY / 20) * 20;
 
@@ -565,12 +601,11 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
                       type: w === WeaponType.BARREL ? 'BARREL' : 'WALL',
                       hp: w === WeaponType.BARREL ? 50 : 200
                    });
-                   soundSystem.playShoot('pistol'); // Place sound
+                   soundSystem.playShoot('pistol');
                 }
              } 
-             // Standard Weapons
              else if (ps.reloadTimer > 0) {
-                // wait
+                // Reloading...
              } else if (ammo.clip <= 0) {
                 if (frameRef.current - lastShotTimesRef.current[idx] > 20) {
                    soundSystem.playEmpty();
@@ -582,7 +617,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
                 ammo.clip--;
                 statsRef.current.shotsFired++;
                 
-                // Sound & Shake
                 if (w === WeaponType.PISTOL) soundSystem.playShoot('pistol');
                 else if (w === WeaponType.SHOTGUN) soundSystem.playShoot('shotgun');
                 else if (w === WeaponType.FLAMETHROWER) soundSystem.playShoot('flame');
@@ -591,7 +625,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
                 if (w === WeaponType.SHOTGUN || w === WeaponType.SNIPER || w === WeaponType.RAILGUN) addShake(5);
                 else addShake(2);
 
-                // Damage Calc
                 const weaponLevel = upgrades.weaponLevels?.[w] || 0;
                 const weaponDmgMult = 1 + (weaponLevel * 0.2);
                 const totalDamage = weapon.damage * globalDamageMult * weaponDmgMult;
@@ -626,7 +659,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          }
       });
 
-      // Check Game Over (All players dead)
+      // Check Game Over
       if (playersRef.current.every(p => p.dead)) {
          onGameOver(statsRef.current, 'defeat');
       }
@@ -646,7 +679,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          if (b.x < 0 || b.x > CANVAS_WIDTH || b.y < 0 || b.y > CANVAS_HEIGHT) destroyed = true;
          if (b.duration <= 0 && !destroyed) destroyed = true;
 
-         // Obstacles Logic
          if (!destroyed) {
             for (const obs of obstaclesRef.current) {
                if (checkRectCollision(b.x, b.y, b.radius, obs)) {
@@ -654,7 +686,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
                      obs.hp -= b.damage;
                      spawnFloatingText(obs.x + obs.width/2, obs.y, Math.ceil(b.damage).toString(), 'orange', 10);
                      if (obs.hp <= 0) {
-                        // Destroy
                         if (obs.type === 'BARREL') {
                            spawnExplosion(obs.x+15, obs.y+15, 100, 150, b.ownerId);
                         } else {
@@ -667,9 +698,8 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
                      }
                   }
                   destroyed = true;
-                  if (b.pierce && b.pierce > 0) { // High pierce railgun goes through walls? No, only enemies usually.
-                      if (obs.type === 'WALL') destroyed = true; // Walls stop everything usually
-                  }
+                  if (b.pierce && b.pierce > 0 && obs.type !== 'WALL') destroyed = false; // Pierce through crates
+                  if (obs.type === 'WALL') destroyed = true;
                   break;
                }
             }
@@ -748,7 +778,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
       for (let i = enemiesRef.current.length - 1; i >= 0; i--) {
          const enemy = enemiesRef.current[i];
          
-         // Find closest living player
          let target = playersRef.current[0];
          let minDist = 999999;
          playersRef.current.forEach(p => {
@@ -764,7 +793,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
              const angle = Math.atan2(target.y - enemy.y, target.x - enemy.x);
              enemy.angle = angle;
              
-             // Movement Logic similar to before, omitted strict detail for brevity but included collision
              let speed = enemy.speed;
              if (enemy.type === EnemyType.SPITTER && minDist < 300) {
                 speed = 0; 
@@ -790,14 +818,12 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
              }
          }
 
-         // Boss Logic (Simulated from previous)
          if (enemy.type === EnemyType.BOSS) {
              if (!enemy.enraged && enemy.hp < enemy.maxHp * 0.5) {
                  enemy.enraged = true; enemy.speed *= 1.6; enemy.color = '#ff0000';
                  spawnFloatingText(enemy.x, enemy.y, "ENRAGED!", "#ff0000", 40);
                  addShake(20);
              }
-             // Minion spawn logic...
              if (frameRef.current % 300 === 0) {
                  for(let k=0;k<3;k++) enemiesRef.current.push({
                      id: Math.random().toString(), x: enemy.x, y: enemy.y, type: EnemyType.NORMAL,
@@ -806,12 +832,11 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
              }
          }
 
-         // Player Collision (Damage)
          playersRef.current.forEach(p => {
             if (p.dead) return;
             if (Math.hypot(p.x - enemy.x, p.y - enemy.y) < p.radius + enemy.radius) {
                if (enemy.type === EnemyType.EXPLODER) {
-                  enemy.hp = 0; // Die
+                  enemy.hp = 0; 
                } else if (frameRef.current % 30 === 0 && shieldTimerRef.current <= 0) {
                   p.hp -= 10 * diffMod.damage;
                   spawnFloatingText(p.x, p.y, "-10", "red");
@@ -822,7 +847,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
             }
          });
 
-         // Death
          if (enemy.hp <= 0) {
             let s = ENEMY_STATS[enemy.type!].score * diffMod.score;
             if (doublePointsTimerRef.current > 0) s *= 2;
@@ -830,7 +854,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
             statsRef.current.score = scoreRef.current;
             statsRef.current.kills++;
             
-            // COMBO UNLOCK CHECK
             comboRef.current.count++;
             comboRef.current.timer = 120;
             checkComboUnlocks();
@@ -844,7 +867,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          }
       }
 
-      // Enemy Bullets update
       for (let i = enemyBulletsRef.current.length - 1; i >= 0; i--) {
          const b = enemyBulletsRef.current[i];
          b.x += b.vx; b.y += b.vy; b.duration--;
@@ -866,7 +888,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          if (destroyed || b.duration <= 0) enemyBulletsRef.current.splice(i, 1);
       }
 
-      // Items
       for (let i = itemsRef.current.length - 1; i >= 0; i--) {
          const item = itemsRef.current[i];
          item.life--;
@@ -874,7 +895,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          playersRef.current.forEach((p, pIdx) => {
             if (p.dead) return;
             if (Math.hypot(p.x - item.x, p.y - item.y) < p.radius + 15) {
-               // Pickup Logic
                const stats = ITEM_STATS[item.type];
                spawnFloatingText(p.x, p.y - 30, stats.symbol, stats.color, 20);
                
@@ -886,7 +906,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
                      ps.ammo[w].reserve = Math.min(WEAPON_STATS[w].maxReserve, ps.ammo[w].reserve + WEAPON_STATS[w].clipSize * 2);
                   });
                }
-               // Global Powerups
                else if (item.type === ItemType.NUKE) enemiesRef.current.forEach(e => e.hp = 0);
                else if (item.type === ItemType.RAPID_FIRE) rapidFireTimerRef.current = stats.duration!;
                else if (item.type === ItemType.DOUBLE_POINTS) doublePointsTimerRef.current = stats.duration!;
@@ -901,7 +920,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
       }
 
       // Render Entities
-      // Players
       playersRef.current.forEach(p => {
          if (p.dead) return;
          ctx.save();
@@ -916,14 +934,12 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          ctx.restore();
       });
 
-      // Enemies
       enemiesRef.current.forEach(e => {
          ctx.save();
          ctx.translate(e.x, e.y);
          ctx.rotate(e.angle);
          ctx.fillStyle = freezeTimerRef.current > 0 ? '#06b6d4' : e.color;
          ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI*2); ctx.fill();
-         // HP Bar
          if (e.hp < e.maxHp) {
             ctx.fillStyle = 'red'; ctx.fillRect(-15, -e.radius-10, 30, 4);
             ctx.fillStyle = 'lime'; ctx.fillRect(-15, -e.radius-10, 30 * (e.hp/e.maxHp), 4);
@@ -931,7 +947,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          ctx.restore();
       });
 
-      // Render Bullets, Particles, Floating Text... (Simplified copy of previous logic)
       bulletsRef.current.forEach(b => { ctx.fillStyle=b.color; ctx.beginPath(); ctx.arc(b.x,b.y,b.radius,0,Math.PI*2); ctx.fill(); });
       particlesRef.current.forEach(p => { ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); });
       floatingTextsRef.current.forEach(t => { ctx.fillStyle=t.color; ctx.fillText(t.text, t.x, t.y); });
@@ -939,7 +954,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
 
       ctx.restore();
 
-      // Update UI State
       const activePs = playerStatesRef.current;
       const actives = [];
       if (rapidFireTimerRef.current > 0) actives.push('RAPID');
@@ -981,7 +995,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
     <div className="relative">
        <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="block border-4 border-zinc-800 bg-black rounded shadow-2xl cursor-crosshair mx-auto"/>
        
-       {/* Wave Info */}
        {uiState.waveState === 'INTERMISSION' && gameMode !== GameMode.TIME_ATTACK && (
          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
              <div className="bg-black/70 p-6 rounded text-center border-y-4 border-green-600 w-full backdrop-blur-sm">
@@ -991,9 +1004,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          </div>
        )}
 
-       {/* HUD: Split for Multiplayer */}
        <div className="absolute top-4 left-0 w-full px-4 flex justify-between pointer-events-none">
-          {/* Player 1 HUD */}
           <div className="flex flex-col gap-1">
              <div className="flex items-center gap-2 bg-black/60 p-2 rounded border border-blue-900 text-blue-400">
                 <User size={20} /> P1
@@ -1007,7 +1018,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
              </div>
           </div>
 
-          {/* Center Stats */}
           <div className="flex flex-col items-center">
              <div className="bg-black/60 px-4 py-1 rounded border border-zinc-700 text-white font-bold text-xl">
                 SCORE: {uiState.score}
@@ -1020,7 +1030,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
              </div>
           </div>
 
-          {/* Player 2 HUD (If active) */}
           {isMultiplayer ? (
             <div className="flex flex-col gap-1 items-end">
                <div className="flex items-center gap-2 bg-black/60 p-2 rounded border border-orange-900 text-orange-400">
@@ -1035,7 +1044,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
                </div>
             </div>
           ) : (
-             // Single Player Right Side Info
              <div className="bg-black/60 p-2 rounded border border-zinc-700 text-zinc-300 w-32">
                 <div className="text-sm">WAVE {uiState.wave}</div>
                 {gameMode === GameMode.TIME_ATTACK && <div className="text-xl text-red-400 font-mono">{Math.floor(uiState.timeAttackTime/60)}:{(uiState.timeAttackTime%60).toString().padStart(2,'0')}</div>}

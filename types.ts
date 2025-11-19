@@ -164,7 +164,7 @@ export interface KeyBindings {
   left: string[];
   right: string[];
   reload: string[];
-  shoot?: string[]; // For P2
+  shoot?: string[]; // For P2 and P1 Keyboard
   prevWeapon?: string[];
   nextWeapon?: string[];
 }
@@ -177,6 +177,7 @@ export interface GameSettings {
   particles: 'LOW' | 'MEDIUM' | 'HIGH';
   keys: KeyBindings;
   p2Keys: KeyBindings; // Player 2 specific bindings
+  coopControlScheme: 'FOLLOW_MOVE' | 'AUTO_AIM';
 }
 
 export interface Achievement {
