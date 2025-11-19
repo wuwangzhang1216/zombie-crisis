@@ -1,11 +1,10 @@
-
 import React, { useState, useEffect } from 'react';
 import GameEngine from './components/GameEngine';
 import BriefingModal from './components/BriefingModal';
 import { GameState, LevelConfig, GameSettings, Difficulty, GameStats, PlayerUpgrades, GameMode, Achievement, WeaponType } from './types';
 import { LEVELS, CANVAS_WIDTH, DEFAULT_SETTINGS, UPGRADE_CONFIG, ACHIEVEMENTS, WEAPON_UPGRADE_COST } from './constants';
 import { soundSystem } from './services/SoundSystem';
-import { Gamepad2, Skull, Trophy, Crown, Settings as SettingsIcon, X, Volume2, Gauge, Monitor, ShoppingCart, Crosshair, Shield, Zap, Timer, Activity, Lock, Swords } from 'lucide-react';
+import { Gamepad2, Skull, Trophy, Crown, Settings as SettingsIcon, X, Volume2, Gauge, Monitor, ShoppingCart, Crosshair, Shield, Zap, Timer, Activity, Lock, Swords, Users, Hammer } from 'lucide-react';
 
 const DEFAULT_UPGRADES: PlayerUpgrades = { health: 0, speed: 0, damage: 0, weaponLevels: {} };
 
@@ -19,6 +18,7 @@ const App: React.FC = () => {
   const [credits, setCredits] = useState(0);
   const [upgrades, setUpgrades] = useState<PlayerUpgrades>(DEFAULT_UPGRADES);
   const [unlockedAchievements, setUnlockedAchievements] = useState<string[]>([]);
+  const [maxUnlockedLevel, setMaxUnlockedLevel] = useState(1);
   
   const [showSettings, setShowSettings] = useState(false);
   const [showArmory, setShowArmory] = useState(false);
@@ -37,13 +37,15 @@ const App: React.FC = () => {
     const savedUpgrades = localStorage.getItem('zombie_crisis_upgrades');
     if (savedUpgrades) {
        const parsed = JSON.parse(savedUpgrades);
-       // Migration check for new weaponLevels field
        if (!parsed.weaponLevels) parsed.weaponLevels = {};
        setUpgrades(parsed);
     }
     
     const savedAchievements = localStorage.getItem('zombie_crisis_achievements');
     if (savedAchievements) setUnlockedAchievements(JSON.parse(savedAchievements));
+
+    const savedProgress = localStorage.getItem('zombie_crisis_progress');
+    if (savedProgress) setMaxUnlockedLevel(parseInt(savedProgress, 10));
 
     const savedSettings = localStorage.getItem('zombie_crisis_settings');
     if (savedSettings) {
@@ -64,7 +66,6 @@ const App: React.FC = () => {
   };
 
   const buyUpgrade = (type: keyof PlayerUpgrades) => {
-    // Only handle basic stats here
     if (type === 'weaponLevels') return; 
 
     const level = upgrades[type] as number;
@@ -113,16 +114,15 @@ const App: React.FC = () => {
 
   const checkAchievements = (stats: GameStats) => {
     const newUnlocks: string[] = [];
-    
     ACHIEVEMENTS.forEach(ach => {
       if (unlockedAchievements.includes(ach.id)) return;
-
       let unlocked = false;
       if (ach.id === 'FIRST_BLOOD' && stats.kills > 0) unlocked = true;
-      if (ach.id === 'SLAUGHTER' && stats.kills >= 500) unlocked = true; // Ideally persistent
+      if (ach.id === 'SLAUGHTER' && stats.kills >= 500) unlocked = true; 
       if (ach.id === 'PISTOL_PRO' && stats.weaponsUsed.length === 1 && stats.weaponsUsed.includes(WeaponType.PISTOL) && stats.score > 0) unlocked = true;
       if (ach.id === 'SURVIVOR' && stats.damageTaken === 0 && stats.score > 0) unlocked = true;
       if (ach.id === 'IRON_WILL' && currentGameMode === GameMode.ENDLESS && stats.waveReached >= 10) unlocked = true;
+      if (ach.id === 'COOP_BUDDY' && currentGameMode === GameMode.COOP) unlocked = true;
 
       if (unlocked) newUnlocks.push(ach.id);
     });
@@ -150,18 +150,29 @@ const App: React.FC = () => {
     }
     
     if (reason === 'victory' && currentGameMode === GameMode.CAMPAIGN) {
+      const nextLevelId = currentLevel.id + 1;
+      if (nextLevelId > maxUnlockedLevel) {
+         setMaxUnlockedLevel(nextLevelId);
+         localStorage.setItem('zombie_crisis_progress', nextLevelId.toString());
+      }
       if (currentLevel.id === LEVELS.length) {
          setGameState(GameState.VICTORY);
       } else {
-         const nextLevel = LEVELS.find(l => l.id === currentLevel.id + 1);
-         if (nextLevel) {
-           setCurrentLevel(nextLevel);
-         }
+         const nextLevel = LEVELS.find(l => l.id === nextLevelId);
+         if (nextLevel) setCurrentLevel(nextLevel);
          setGameState(GameState.GAME_OVER); 
       }
     } else {
       setGameState(GameState.GAME_OVER);
     }
+  };
+
+  const handleRestart = () => {
+    startGame(currentLevel.id, currentGameMode);
+  };
+
+  const handleExit = () => {
+    setGameState(GameState.MENU);
   };
 
   const getUpgradeCost = (type: keyof Omit<PlayerUpgrades, 'weaponLevels'>) => {
@@ -179,6 +190,8 @@ const App: React.FC = () => {
         case 'Zap': return <Zap />;
         case 'Crown': return <Crown />;
         case 'Activity': return <Activity />;
+        case 'Users': return <Users />;
+        case 'Hammer': return <Hammer />;
         default: return <Trophy />;
      }
   };
@@ -220,16 +233,26 @@ const App: React.FC = () => {
                 >
                   <div>
                     <div className="text-2xl text-zinc-200 group-hover:text-green-400 font-bold">CAMPAIGN</div>
-                    <div className="text-lg text-zinc-500">Story Mode. 6 Sectors.</div>
+                    <div className="text-lg text-zinc-500">Story Mode. 18 Sectors.</div>
                   </div>
                   <div className="text-zinc-600 group-hover:text-green-500">
                     <Gamepad2 size={32} />
                   </div>
                 </button>
                 
+                <button
+                  onClick={() => startGame(1, GameMode.COOP)} // Start level 1 in coop
+                  className="group flex items-center justify-between p-4 bg-black border border-zinc-700 hover:border-orange-500 hover:bg-zinc-900 transition-all text-left"
+                >
+                  <div>
+                    <div className="text-2xl text-orange-400 group-hover:text-orange-300 font-bold flex items-center gap-2"><Users /> LOCAL CO-OP</div>
+                    <div className="text-lg text-zinc-500">2 Players (WASD + Arrows).</div>
+                  </div>
+                </button>
+
                 <div className="grid grid-cols-2 gap-4">
                    <button
-                     onClick={() => startGame(6, GameMode.ENDLESS)} // Level 6 map for endless
+                     onClick={() => startGame(12, GameMode.ENDLESS)} // Hard map for endless
                      className="group p-4 bg-black border border-zinc-700 hover:border-purple-500 hover:bg-zinc-900 transition-all text-left"
                    >
                      <div className="text-xl text-purple-400 font-bold flex items-center gap-2"><Activity /> ENDLESS</div>
@@ -253,18 +276,29 @@ const App: React.FC = () => {
               <button onClick={() => setShowModeSelect(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white"><X size={24}/></button>
               <h2 className="text-3xl text-green-500 mb-6 border-b border-zinc-700 pb-4">SELECT CAMPAIGN MISSION</h2>
               <div className="grid gap-4 max-h-[400px] overflow-y-auto pr-2">
-                {LEVELS.map((level) => (
-                  <button
-                    key={level.id}
-                    onClick={() => startGame(level.id, GameMode.CAMPAIGN)}
-                    className="group flex items-center justify-between p-4 bg-black border border-zinc-700 hover:border-green-500 hover:bg-zinc-900 transition-all text-left"
-                  >
-                    <div>
-                      <div className="text-2xl text-zinc-200 group-hover:text-green-400 font-bold">{level.id}. {level.name}</div>
-                      <div className="text-lg text-zinc-500">{level.description}</div>
-                    </div>
-                  </button>
-                ))}
+                {LEVELS.map((level) => {
+                  const isLocked = level.id > maxUnlockedLevel;
+                  return (
+                    <button
+                      key={level.id}
+                      onClick={() => !isLocked && startGame(level.id, GameMode.CAMPAIGN)}
+                      disabled={isLocked}
+                      className={`group flex items-center justify-between p-4 border transition-all text-left ${
+                         isLocked 
+                           ? 'bg-zinc-950 border-zinc-800 opacity-50 cursor-not-allowed' 
+                           : 'bg-black border-zinc-700 hover:border-green-500 hover:bg-zinc-900'
+                      }`}
+                    >
+                      <div className="flex items-center gap-4">
+                         {isLocked ? <Lock className="text-zinc-600" /> : <div className="w-6 text-green-500 font-bold text-center">{level.id}</div>}
+                         <div>
+                           <div className={`text-2xl font-bold ${isLocked ? 'text-zinc-600' : 'text-zinc-200 group-hover:text-green-400'}`}>{level.name}</div>
+                           <div className="text-lg text-zinc-500">{isLocked ? 'LOCKED' : level.description}</div>
+                         </div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
            </div>
         )}
@@ -312,7 +346,7 @@ const App: React.FC = () => {
              {/* Weapon Stats */}
              <h3 className="text-green-400 text-xl mb-2 border-b border-zinc-700">WEAPON PROFICIENCY (+20% DMG)</h3>
              <div className="grid gap-4">
-               {Object.values(WeaponType).map((w) => {
+               {Object.values(WeaponType).filter(w => w !== WeaponType.BARREL && w !== WeaponType.WALL).map((w) => {
                  const level = upgrades.weaponLevels?.[w] || 0;
                  const cost = WEAPON_UPGRADE_COST * (level + 1);
                  const isMax = level >= 5;
@@ -414,7 +448,15 @@ const App: React.FC = () => {
         )}
 
         {gameState === GameState.PLAYING && (
-          <GameEngine level={currentLevel} settings={settings} upgrades={upgrades} gameMode={currentGameMode} onGameOver={handleGameOver} />
+          <GameEngine 
+            level={currentLevel} 
+            settings={settings} 
+            upgrades={upgrades} 
+            gameMode={currentGameMode} 
+            onGameOver={handleGameOver} 
+            onRestart={handleRestart}
+            onExit={handleExit}
+          />
         )}
 
         {gameState === GameState.GAME_OVER && lastStats && (

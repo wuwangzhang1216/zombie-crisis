@@ -10,15 +10,21 @@ export enum GameState {
 export enum GameMode {
   CAMPAIGN = 'CAMPAIGN',
   ENDLESS = 'ENDLESS',
-  TIME_ATTACK = 'TIME_ATTACK'
+  TIME_ATTACK = 'TIME_ATTACK',
+  COOP = 'COOP',
+  DEATHMATCH = 'DEATHMATCH'
 }
 
 export enum WeaponType {
   PISTOL = 'Pistol',
+  UZI = 'Uzi',
   SHOTGUN = 'Shotgun',
-  FLAMETHROWER = 'Flamethrower',
   ASSAULT_RIFLE = 'Assault Rifle',
-  SNIPER = 'Sniper Rifle'
+  SNIPER = 'Sniper Rifle',
+  FLAMETHROWER = 'Flamethrower',
+  RAILGUN = 'Railgun',
+  BARREL = 'Explosive Barrel', // Placeable
+  WALL = 'Barricade'          // Placeable
 }
 
 export enum EnemyType {
@@ -52,8 +58,8 @@ export interface Obstacle {
   y: number;
   width: number;
   height: number;
-  type: 'WALL' | 'CRATE'; // Wall is indestructible, Crate can be broken
-  hp?: number; // Only for crates
+  type: 'WALL' | 'CRATE' | 'BARREL'; 
+  hp?: number; 
 }
 
 export interface LevelConfig {
@@ -66,10 +72,12 @@ export interface LevelConfig {
   unlockedWeapon?: WeaponType;
   background: string;
   obstacles: Obstacle[];
+  isBossLevel?: boolean;
 }
 
 export interface Entity {
   id: string;
+  playerIndex?: number; // 0 for P1, 1 for P2
   x: number;
   y: number;
   radius: number;
@@ -79,11 +87,15 @@ export interface Entity {
   hp: number;
   maxHp: number;
   type?: EnemyType;
-  attackTimer?: number; // For spitters
+  attackTimer?: number; 
+  enraged?: boolean; 
+  dead?: boolean; // For multiplayer respawn logic
+  score?: number; // Individual score tracking
 }
 
 export interface Bullet {
   id: string;
+  ownerId: string; // 'player-0', 'player-1', or enemy ID
   x: number;
   y: number;
   vx: number;
@@ -92,8 +104,8 @@ export interface Bullet {
   color: string;
   radius: number;
   duration: number; 
-  pierce?: number; // For Sniper
-  isEnemy?: boolean; // For Spitter
+  pierce?: number; 
+  isEnemy?: boolean; 
 }
 
 export interface Particle {
@@ -143,7 +155,7 @@ export interface PlayerUpgrades {
   health: number;
   speed: number;
   damage: number;
-  weaponLevels: { [key in WeaponType]?: number }; // Level 0-5
+  weaponLevels: { [key in WeaponType]?: number }; 
 }
 
 export interface KeyBindings {
@@ -152,6 +164,9 @@ export interface KeyBindings {
   left: string[];
   right: string[];
   reload: string[];
+  shoot?: string[]; // For P2
+  prevWeapon?: string[];
+  nextWeapon?: string[];
 }
 
 export interface GameSettings {
@@ -161,6 +176,7 @@ export interface GameSettings {
   difficulty: Difficulty;
   particles: 'LOW' | 'MEDIUM' | 'HIGH';
   keys: KeyBindings;
+  p2Keys: KeyBindings; // Player 2 specific bindings
 }
 
 export interface Achievement {
