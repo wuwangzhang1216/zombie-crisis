@@ -3,11 +3,11 @@ import React, { useState, useEffect } from 'react';
 import GameEngine from './components/GameEngine';
 import BriefingModal from './components/BriefingModal';
 import { GameState, LevelConfig, GameSettings, Difficulty, GameStats, PlayerUpgrades, GameMode, Achievement, WeaponType } from './types';
-import { LEVELS, CANVAS_WIDTH, DEFAULT_SETTINGS, UPGRADE_CONFIG, ACHIEVEMENTS } from './constants';
+import { LEVELS, CANVAS_WIDTH, DEFAULT_SETTINGS, UPGRADE_CONFIG, ACHIEVEMENTS, WEAPON_UPGRADE_COST } from './constants';
 import { soundSystem } from './services/SoundSystem';
-import { Gamepad2, Skull, Trophy, Crown, Settings as SettingsIcon, X, Volume2, Gauge, Monitor, ShoppingCart, Crosshair, Shield, Zap, Timer, Activity, Lock } from 'lucide-react';
+import { Gamepad2, Skull, Trophy, Crown, Settings as SettingsIcon, X, Volume2, Gauge, Monitor, ShoppingCart, Crosshair, Shield, Zap, Timer, Activity, Lock, Swords } from 'lucide-react';
 
-const DEFAULT_UPGRADES: PlayerUpgrades = { health: 0, speed: 0, damage: 0 };
+const DEFAULT_UPGRADES: PlayerUpgrades = { health: 0, speed: 0, damage: 0, weaponLevels: {} };
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
@@ -35,7 +35,12 @@ const App: React.FC = () => {
     if (savedCredits) setCredits(parseInt(savedCredits, 10));
 
     const savedUpgrades = localStorage.getItem('zombie_crisis_upgrades');
-    if (savedUpgrades) setUpgrades(JSON.parse(savedUpgrades));
+    if (savedUpgrades) {
+       const parsed = JSON.parse(savedUpgrades);
+       // Migration check for new weaponLevels field
+       if (!parsed.weaponLevels) parsed.weaponLevels = {};
+       setUpgrades(parsed);
+    }
     
     const savedAchievements = localStorage.getItem('zombie_crisis_achievements');
     if (savedAchievements) setUnlockedAchievements(JSON.parse(savedAchievements));
@@ -59,8 +64,11 @@ const App: React.FC = () => {
   };
 
   const buyUpgrade = (type: keyof PlayerUpgrades) => {
-    const level = upgrades[type];
-    const config = UPGRADE_CONFIG[type];
+    // Only handle basic stats here
+    if (type === 'weaponLevels') return; 
+
+    const level = upgrades[type] as number;
+    const config = UPGRADE_CONFIG[type as 'health' | 'speed' | 'damage'];
     if (level >= config.maxLevel) return;
 
     const cost = Math.floor(config.baseCost * Math.pow(config.costMult, level));
@@ -72,6 +80,23 @@ const App: React.FC = () => {
       localStorage.setItem('zombie_crisis_upgrades', JSON.stringify(newUpgrades));
       soundSystem.playCash();
     }
+  };
+
+  const buyWeaponUpgrade = (weapon: WeaponType) => {
+     const currentLevel = upgrades.weaponLevels?.[weapon] || 0;
+     if (currentLevel >= 5) return;
+     
+     const cost = WEAPON_UPGRADE_COST * (currentLevel + 1);
+     
+     if (credits >= cost) {
+        const newWeaponLevels = { ...upgrades.weaponLevels, [weapon]: currentLevel + 1 };
+        const newUpgrades = { ...upgrades, weaponLevels: newWeaponLevels };
+        setCredits(prev => prev - cost);
+        setUpgrades(newUpgrades);
+        localStorage.setItem('zombie_crisis_credits', (credits - cost).toString());
+        localStorage.setItem('zombie_crisis_upgrades', JSON.stringify(newUpgrades));
+        soundSystem.playCash();
+     }
   };
 
   const startGame = (levelId: number, mode: GameMode) => {
@@ -94,11 +119,7 @@ const App: React.FC = () => {
 
       let unlocked = false;
       if (ach.id === 'FIRST_BLOOD' && stats.kills > 0) unlocked = true;
-      if (ach.id === 'SLAUGHTER') {
-         // Needs persistent tracking, for now checking single run for simplicity or assume stats.kills is cumulative if we loaded total kills
-         // Simple implementation: Check single run for now
-         if (stats.kills >= 500) unlocked = true;
-      }
+      if (ach.id === 'SLAUGHTER' && stats.kills >= 500) unlocked = true; // Ideally persistent
       if (ach.id === 'PISTOL_PRO' && stats.weaponsUsed.length === 1 && stats.weaponsUsed.includes(WeaponType.PISTOL) && stats.score > 0) unlocked = true;
       if (ach.id === 'SURVIVOR' && stats.damageTaken === 0 && stats.score > 0) unlocked = true;
       if (ach.id === 'IRON_WILL' && currentGameMode === GameMode.ENDLESS && stats.waveReached >= 10) unlocked = true;
@@ -118,7 +139,6 @@ const App: React.FC = () => {
     setLastStats(stats);
     checkAchievements(stats);
     
-    // 10% of score converted to credits
     const earnedCredits = Math.floor(stats.score * 0.1);
     const newCredits = credits + earnedCredits;
     setCredits(newCredits);
@@ -130,8 +150,7 @@ const App: React.FC = () => {
     }
     
     if (reason === 'victory' && currentGameMode === GameMode.CAMPAIGN) {
-      // If level 3 is beat, go to victory screen, else next level
-      if (currentLevel.id === 3) {
+      if (currentLevel.id === LEVELS.length) {
          setGameState(GameState.VICTORY);
       } else {
          const nextLevel = LEVELS.find(l => l.id === currentLevel.id + 1);
@@ -145,7 +164,7 @@ const App: React.FC = () => {
     }
   };
 
-  const getUpgradeCost = (type: keyof PlayerUpgrades) => {
+  const getUpgradeCost = (type: keyof Omit<PlayerUpgrades, 'weaponLevels'>) => {
     const level = upgrades[type];
     const config = UPGRADE_CONFIG[type];
     if (level >= config.maxLevel) return 'MAX';
@@ -201,7 +220,7 @@ const App: React.FC = () => {
                 >
                   <div>
                     <div className="text-2xl text-zinc-200 group-hover:text-green-400 font-bold">CAMPAIGN</div>
-                    <div className="text-lg text-zinc-500">Story Mode. Clear sectors.</div>
+                    <div className="text-lg text-zinc-500">Story Mode. 6 Sectors.</div>
                   </div>
                   <div className="text-zinc-600 group-hover:text-green-500">
                     <Gamepad2 size={32} />
@@ -210,7 +229,7 @@ const App: React.FC = () => {
                 
                 <div className="grid grid-cols-2 gap-4">
                    <button
-                     onClick={() => startGame(3, GameMode.ENDLESS)}
+                     onClick={() => startGame(6, GameMode.ENDLESS)} // Level 6 map for endless
                      className="group p-4 bg-black border border-zinc-700 hover:border-purple-500 hover:bg-zinc-900 transition-all text-left"
                    >
                      <div className="text-xl text-purple-400 font-bold flex items-center gap-2"><Activity /> ENDLESS</div>
@@ -233,7 +252,7 @@ const App: React.FC = () => {
            <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-zinc-800 p-8 shadow-2xl relative">
               <button onClick={() => setShowModeSelect(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white"><X size={24}/></button>
               <h2 className="text-3xl text-green-500 mb-6 border-b border-zinc-700 pb-4">SELECT CAMPAIGN MISSION</h2>
-              <div className="grid gap-4">
+              <div className="grid gap-4 max-h-[400px] overflow-y-auto pr-2">
                 {LEVELS.map((level) => (
                   <button
                     key={level.id}
@@ -251,40 +270,81 @@ const App: React.FC = () => {
         )}
 
         {showArmory && (
-          <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-green-900 p-8 shadow-2xl relative">
+          <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-green-900 p-8 shadow-2xl relative max-h-[80vh] overflow-y-auto">
              <button onClick={() => setShowArmory(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white"><X size={24}/></button>
              <h2 className="text-3xl text-yellow-500 mb-6 flex items-center gap-3"><ShoppingCart /> ARMORY REQUISITIONS</h2>
-             <div className="grid gap-6">
-               {(Object.keys(UPGRADE_CONFIG) as (keyof PlayerUpgrades)[]).map(key => (
+             
+             {/* Player Stats */}
+             <h3 className="text-green-400 text-xl mb-2 border-b border-zinc-700">SUIT UPGRADES</h3>
+             <div className="grid gap-4 mb-8">
+               {['health', 'speed', 'damage'].map((key) => (
                  <div key={key} className="bg-black p-4 border border-zinc-700 flex justify-between items-center">
                     <div>
                        <h3 className="text-xl text-green-400 font-bold flex items-center gap-2">
                          {key === 'health' && <Shield size={18}/>}
                          {key === 'damage' && <Crosshair size={18}/>}
                          {key === 'speed' && <Zap size={18}/>}
-                         {UPGRADE_CONFIG[key].name}
+                         {UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].name}
                        </h3>
                        <div className="flex gap-1 mt-2">
-                         {[...Array(UPGRADE_CONFIG[key].maxLevel)].map((_, i) => (
-                           <div key={i} className={`w-8 h-2 rounded ${i < upgrades[key] ? 'bg-green-500' : 'bg-zinc-800'}`} />
+                         {[...Array(UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel)].map((_, i) => (
+                           <div key={i} className={`w-8 h-2 rounded ${i < (upgrades[key as keyof PlayerUpgrades] as number) ? 'bg-green-500' : 'bg-zinc-800'}`} />
                          ))}
                        </div>
                     </div>
                     <button 
-                      onClick={() => buyUpgrade(key)}
-                      disabled={upgrades[key] >= UPGRADE_CONFIG[key].maxLevel || credits < (getUpgradeCost(key) as number)}
+                      onClick={() => buyUpgrade(key as keyof PlayerUpgrades)}
+                      disabled={(upgrades[key as keyof PlayerUpgrades] as number) >= UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel || credits < (getUpgradeCost(key as any) as number)}
                       className={`px-6 py-2 font-bold border-2 ${
-                        upgrades[key] >= UPGRADE_CONFIG[key].maxLevel 
+                        (upgrades[key as keyof PlayerUpgrades] as number) >= UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel 
                         ? 'border-zinc-700 text-zinc-500' 
-                        : credits >= (getUpgradeCost(key) as number) 
+                        : credits >= (getUpgradeCost(key as any) as number) 
                           ? 'border-yellow-600 text-yellow-500 hover:bg-yellow-900' 
                           : 'border-red-900 text-red-900'
                       }`}
                     >
-                      {upgrades[key] >= UPGRADE_CONFIG[key].maxLevel ? 'MAXED' : `${getUpgradeCost(key)} CR`}
+                      {(upgrades[key as keyof PlayerUpgrades] as number) >= UPGRADE_CONFIG[key as keyof typeof UPGRADE_CONFIG].maxLevel ? 'MAXED' : `${getUpgradeCost(key as any)} CR`}
                     </button>
                  </div>
                ))}
+             </div>
+
+             {/* Weapon Stats */}
+             <h3 className="text-green-400 text-xl mb-2 border-b border-zinc-700">WEAPON PROFICIENCY (+20% DMG)</h3>
+             <div className="grid gap-4">
+               {Object.values(WeaponType).map((w) => {
+                 const level = upgrades.weaponLevels?.[w] || 0;
+                 const cost = WEAPON_UPGRADE_COST * (level + 1);
+                 const isMax = level >= 5;
+
+                 return (
+                   <div key={w} className="bg-black p-4 border border-zinc-700 flex justify-between items-center">
+                     <div>
+                       <h3 className="text-xl text-blue-400 font-bold flex items-center gap-2">
+                         <Swords size={18}/> {w}
+                       </h3>
+                       <div className="flex gap-1 mt-2">
+                         {[...Array(5)].map((_, i) => (
+                           <div key={i} className={`w-8 h-2 rounded ${i < level ? 'bg-blue-500' : 'bg-zinc-800'}`} />
+                         ))}
+                       </div>
+                     </div>
+                     <button 
+                        onClick={() => buyWeaponUpgrade(w)}
+                        disabled={isMax || credits < cost}
+                        className={`px-6 py-2 font-bold border-2 ${
+                          isMax
+                          ? 'border-zinc-700 text-zinc-500' 
+                          : credits >= cost
+                            ? 'border-yellow-600 text-yellow-500 hover:bg-yellow-900' 
+                            : 'border-red-900 text-red-900'
+                        }`}
+                      >
+                        {isMax ? 'MAXED' : `${cost} CR`}
+                      </button>
+                   </div>
+                 )
+               })}
              </div>
           </div>
         )}
@@ -391,7 +451,7 @@ const App: React.FC = () => {
 
             <div className="flex justify-center gap-4">
               <button onClick={() => setGameState(GameState.MENU)} className="px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold border border-zinc-600">RETURN TO BASE</button>
-              {currentGameMode === GameMode.CAMPAIGN && currentLevel.id < 3 && lastStats.score > 0 && ( 
+              {currentGameMode === GameMode.CAMPAIGN && currentLevel.id < LEVELS.length && lastStats.score > 0 && ( 
                 <button onClick={() => startGame(currentLevel.id + 1, GameMode.CAMPAIGN)} className="px-8 py-3 bg-red-700 hover:bg-red-600 text-white font-bold border border-red-500">NEXT MISSION</button>
               )}
               {currentGameMode !== GameMode.CAMPAIGN && (

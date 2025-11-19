@@ -16,13 +16,17 @@ export enum GameMode {
 export enum WeaponType {
   PISTOL = 'Pistol',
   SHOTGUN = 'Shotgun',
-  FLAMETHROWER = 'Flamethrower'
+  FLAMETHROWER = 'Flamethrower',
+  ASSAULT_RIFLE = 'Assault Rifle',
+  SNIPER = 'Sniper Rifle'
 }
 
 export enum EnemyType {
   NORMAL = 'NORMAL',
   RED = 'RED',
   MUMMY = 'MUMMY',
+  EXPLODER = 'EXPLODER',
+  SPITTER = 'SPITTER',
   BOSS = 'BOSS'
 }
 
@@ -42,6 +46,16 @@ export enum Difficulty {
   HARD = 'HARD'
 }
 
+export interface Obstacle {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  type: 'WALL' | 'CRATE'; // Wall is indestructible, Crate can be broken
+  hp?: number; // Only for crates
+}
+
 export interface LevelConfig {
   id: number;
   name: string;
@@ -49,8 +63,9 @@ export interface LevelConfig {
   baseEnemyCount: number; 
   spawnRate: number; 
   enemyTypes: EnemyType[];
-  unlockedWeapon: WeaponType;
+  unlockedWeapon?: WeaponType;
   background: string;
+  obstacles: Obstacle[];
 }
 
 export interface Entity {
@@ -64,6 +79,7 @@ export interface Entity {
   hp: number;
   maxHp: number;
   type?: EnemyType;
+  attackTimer?: number; // For spitters
 }
 
 export interface Bullet {
@@ -76,6 +92,8 @@ export interface Bullet {
   color: string;
   radius: number;
   duration: number; 
+  pierce?: number; // For Sniper
+  isEnemy?: boolean; // For Spitter
 }
 
 export interface Particle {
@@ -125,6 +143,7 @@ export interface PlayerUpgrades {
   health: number;
   speed: number;
   damage: number;
+  weaponLevels: { [key in WeaponType]?: number }; // Level 0-5
 }
 
 export interface KeyBindings {

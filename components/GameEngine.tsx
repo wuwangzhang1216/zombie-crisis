@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { LevelConfig, Entity, Bullet, Particle, WeaponType, Item, ItemType, GameSettings, EnemyType, FloatingText, GameStats, PlayerUpgrades, GameMode } from '../types';
+import { LevelConfig, Entity, Bullet, Particle, WeaponType, Item, ItemType, GameSettings, EnemyType, FloatingText, GameStats, PlayerUpgrades, GameMode, Obstacle } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, PLAYER_SPEED, PLAYER_RADIUS, PLAYER_MAX_HP, WEAPON_STATS, ENEMY_STATS, ITEM_STATS, DIFFICULTY_MODIFIERS, BOSS_STATS, UPGRADE_CONFIG, TIME_ATTACK_LIMIT } from '../constants';
 import { soundSystem } from '../services/SoundSystem';
 import { Zap, Heart, Radiation, Skull, Shield, Crosshair, Clock, Snowflake } from 'lucide-react';
@@ -19,24 +19,37 @@ interface AmmoState {
 
 const TOTAL_WAVES = 5;
 
+// Helper for AABB collision
+const checkRectCollision = (x: number, y: number, radius: number, rect: Obstacle): boolean => {
+  const closestX = Math.max(rect.x, Math.min(x, rect.x + rect.width));
+  const closestY = Math.max(rect.y, Math.min(y, rect.y + rect.height));
+  const dx = x - closestX;
+  const dy = y - closestY;
+  return (dx * dx + dy * dy) < (radius * radius);
+};
+
 const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, gameMode, onGameOver }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
+  // Determine unlocked weapons based on level ID or game mode
   const unlockedWeapons = [WeaponType.PISTOL];
-  // In Endless/Time Attack, unlock all weapons from start? Or progressive? Let's stick to level logic for now, but endless mode needs upgrades
-  if (level.id >= 2 || gameMode === GameMode.ENDLESS || gameMode === GameMode.TIME_ATTACK) unlockedWeapons.push(WeaponType.SHOTGUN);
-  if (level.id >= 3 || gameMode === GameMode.ENDLESS || gameMode === GameMode.TIME_ATTACK) unlockedWeapons.push(WeaponType.FLAMETHROWER);
+  const isEndlessOrTime = gameMode === GameMode.ENDLESS || gameMode === GameMode.TIME_ATTACK;
+  
+  if (level.id >= 2 || isEndlessOrTime) unlockedWeapons.push(WeaponType.SHOTGUN);
+  if (level.id >= 3 || isEndlessOrTime) unlockedWeapons.push(WeaponType.ASSAULT_RIFLE);
+  if (level.id >= 4 || isEndlessOrTime) unlockedWeapons.push(WeaponType.SNIPER);
+  if (level.id >= 5 || isEndlessOrTime) unlockedWeapons.push(WeaponType.FLAMETHROWER);
 
   const diffMod = DIFFICULTY_MODIFIERS[settings.difficulty];
 
   // Apply Upgrades
   const maxHp = PLAYER_MAX_HP + (upgrades.health * UPGRADE_CONFIG.health.valuePerLevel);
   const playerSpeed = PLAYER_SPEED + (upgrades.speed * UPGRADE_CONFIG.speed.valuePerLevel);
-  const damageMult = 1 + (upgrades.damage * UPGRADE_CONFIG.damage.valuePerLevel);
+  const globalDamageMult = 1 + (upgrades.damage * UPGRADE_CONFIG.damage.valuePerLevel);
 
   const playerRef = useRef<Entity>({
     id: 'player',
-    x: CANVAS_WIDTH / 2,
+    x: 100, // Start near left
     y: CANVAS_HEIGHT / 2,
     radius: PLAYER_RADIUS,
     color: '#60a5fa',
@@ -46,8 +59,10 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
     maxHp: maxHp
   });
   
+  const obstaclesRef = useRef<Obstacle[]>(JSON.parse(JSON.stringify(level.obstacles || [])));
   const enemiesRef = useRef<Entity[]>([]);
   const bulletsRef = useRef<Bullet[]>([]);
+  const enemyBulletsRef = useRef<Bullet[]>([]); // New for spitters
   const particlesRef = useRef<Particle[]>([]);
   const itemsRef = useRef<Item[]>([]);
   const floatingTextsRef = useRef<FloatingText[]>([]);
@@ -77,14 +92,17 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
   const enemiesToSpawnRef = useRef<number>(0);
   const waveStateRef = useRef<'SPAWNING' | 'CLEARING' | 'INTERMISSION'>('INTERMISSION');
   const intermissionTimerRef = useRef<number>(180); 
-  const timeAttackTimerRef = useRef<number>(TIME_ATTACK_LIMIT * 60); // Frames
+  const timeAttackTimerRef = useRef<number>(TIME_ATTACK_LIMIT * 60); 
   
   const currentWeaponRef = useRef<WeaponType>(WeaponType.PISTOL);
-  const ammoRef = useRef<AmmoState>({
-    [WeaponType.PISTOL]: { clip: WEAPON_STATS[WeaponType.PISTOL].clipSize, reserve: WEAPON_STATS[WeaponType.PISTOL].maxReserve },
-    [WeaponType.SHOTGUN]: { clip: WEAPON_STATS[WeaponType.SHOTGUN].clipSize, reserve: WEAPON_STATS[WeaponType.SHOTGUN].maxReserve },
-    [WeaponType.FLAMETHROWER]: { clip: WEAPON_STATS[WeaponType.FLAMETHROWER].clipSize, reserve: WEAPON_STATS[WeaponType.FLAMETHROWER].maxReserve }
+  
+  // Initialize ammo
+  const initialAmmo: AmmoState = {};
+  Object.values(WeaponType).forEach(w => {
+     initialAmmo[w] = { clip: WEAPON_STATS[w].clipSize, reserve: WEAPON_STATS[w].maxReserve };
   });
+  const ammoRef = useRef<AmmoState>(initialAmmo);
+  
   const reloadTimerRef = useRef<number>(0);
 
   const [hp, setHp] = useState(maxHp);
@@ -107,14 +125,14 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
     if (gameMode === GameMode.ENDLESS) {
        return Math.ceil(10 + waveIdx * 4);
     }
-    return Math.ceil(level.baseEnemyCount * 0.5) + (waveIdx * 3);
+    return Math.ceil(level.baseEnemyCount * 0.5) + (waveIdx * 4);
   };
   
   useEffect(() => {
     enemiesToSpawnRef.current = getWaveEnemyCount(1);
     if (gameMode === GameMode.TIME_ATTACK) {
-       waveStateRef.current = 'SPAWNING'; // Start immediately
-       enemiesToSpawnRef.current = 999999; // Infinite spawn pool
+       waveStateRef.current = 'SPAWNING';
+       enemiesToSpawnRef.current = 999999;
     }
     soundSystem.startMusic();
     return () => soundSystem.stopMusic();
@@ -171,6 +189,8 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
     const stats = WEAPON_STATS[w];
     const currentAmmo = ammoRef.current[w];
     
+    // Apply reload speed upgrade from weapon levels? (Not implemented yet, using base stats)
+    
     if (currentAmmo.clip < stats.clipSize && (currentAmmo.reserve > 0 || w === WeaponType.PISTOL)) {
       if (reloadTimerRef.current === 0) {
         reloadTimerRef.current = stats.reloadTime;
@@ -208,7 +228,9 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
 
         if (e.key === '1') switchWeapon(WeaponType.PISTOL);
         if (e.key === '2') switchWeapon(WeaponType.SHOTGUN);
-        if (e.key === '3') switchWeapon(WeaponType.FLAMETHROWER);
+        if (e.key === '3') switchWeapon(WeaponType.ASSAULT_RIFLE);
+        if (e.key === '4') switchWeapon(WeaponType.SNIPER);
+        if (e.key === '5') switchWeapon(WeaponType.FLAMETHROWER);
         
         if (settings.keys.reload.includes(e.code)) {
           reloadWeapon();
@@ -249,11 +271,10 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
 
       statsRef.current.timeElapsed += 1;
 
-      // Game Mode specific End Conditions
       if (gameMode === GameMode.TIME_ATTACK) {
          timeAttackTimerRef.current--;
          if (timeAttackTimerRef.current <= 0) {
-            onGameOver(statsRef.current, 'victory'); // Time attack "win" when time runs out
+            onGameOver(statsRef.current, 'victory');
             return;
          }
       }
@@ -266,14 +287,13 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
         }
       }
 
-      // Wave State
+      // Wave Logic
       if (waveStateRef.current === 'INTERMISSION') {
          intermissionTimerRef.current--;
          setIntermissionTimeUI(Math.ceil(intermissionTimerRef.current / 60));
          if (intermissionTimerRef.current <= 0) {
             waveStateRef.current = 'SPAWNING';
-            if (gameMode === GameMode.CAMPAIGN && level.id === 3 && waveRef.current === 5) {
-               // BOSS WAVE
+            if (gameMode === GameMode.CAMPAIGN && level.id === 6 && waveRef.current === 5) {
                enemiesToSpawnRef.current = 1; 
                soundSystem.playBossRoar();
                spawnFloatingText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2, "BOSS INCOMING!", "#ff0000", 40);
@@ -299,10 +319,29 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          }
       }
 
-      // Clear
+      // Clear & Background
       ctx.save();
       ctx.fillStyle = level.background;
       ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      // Draw Obstacles (Behind entities)
+      obstaclesRef.current.forEach(obs => {
+        ctx.fillStyle = obs.type === 'WALL' ? '#374151' : '#78350f'; // Gray vs Brown
+        ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+        
+        // Obstacle detail
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
+        
+        if (obs.type === 'CRATE') {
+           // Cross pattern
+           ctx.beginPath();
+           ctx.moveTo(obs.x, obs.y); ctx.lineTo(obs.x + obs.width, obs.y + obs.height);
+           ctx.moveTo(obs.x + obs.width, obs.y); ctx.lineTo(obs.x, obs.y + obs.height);
+           ctx.stroke();
+        }
+      });
 
       // Shake
       if (shakeRef.current > 0) {
@@ -328,8 +367,23 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
         dy /= length;
         let speed = playerRef.current.speed;
         if (rapidFireTimerRef.current > 0) speed *= 1.2;
-        playerRef.current.x += dx * speed;
-        playerRef.current.y += dy * speed;
+        
+        const nextX = playerRef.current.x + dx * speed;
+        const nextY = playerRef.current.y + dy * speed;
+
+        // Check collision with obstacles
+        let collidedX = false;
+        let collidedY = false;
+        
+        for (const obs of obstaclesRef.current) {
+           if (checkRectCollision(nextX, playerRef.current.y, playerRef.current.radius, obs)) collidedX = true;
+           if (checkRectCollision(playerRef.current.x, nextY, playerRef.current.radius, obs)) collidedY = true;
+        }
+
+        if (!collidedX) playerRef.current.x = nextX;
+        if (!collidedY) playerRef.current.y = nextY;
+
+        // Bounds
         playerRef.current.x = Math.max(playerRef.current.radius, Math.min(CANVAS_WIDTH - playerRef.current.radius, playerRef.current.x));
         playerRef.current.y = Math.max(playerRef.current.radius, Math.min(CANVAS_HEIGHT - playerRef.current.radius, playerRef.current.y));
       }
@@ -341,7 +395,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
       if (shieldTimerRef.current > 0) shieldTimerRef.current--;
       if (freezeTimerRef.current > 0) freezeTimerRef.current--;
 
-      // Reload
+      // Reload Logic
       if (reloadTimerRef.current > 0) {
         reloadTimerRef.current--;
         if (reloadTimerRef.current <= 0) {
@@ -368,6 +422,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
         const currentAmmo = ammoRef.current[currentWeaponRef.current];
 
         if (reloadTimerRef.current > 0) {
+           // Reloading...
         } else if (currentAmmo.clip <= 0) {
           if (frameRef.current - lastShotTimeRef.current > 20) {
              soundSystem.playEmpty();
@@ -381,10 +436,15 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
 
           if (currentWeaponRef.current === WeaponType.PISTOL) soundSystem.playShoot('pistol');
           else if (currentWeaponRef.current === WeaponType.SHOTGUN) soundSystem.playShoot('shotgun');
-          else soundSystem.playShoot('flame');
+          else soundSystem.playShoot('flame'); // Use flame sound for generic rapid
 
-          if (currentWeaponRef.current === WeaponType.SHOTGUN) addShake(5);
+          if (currentWeaponRef.current === WeaponType.SHOTGUN || currentWeaponRef.current === WeaponType.SNIPER) addShake(5);
           else addShake(2);
+
+          // Weapon Damage Upgrade Calculation
+          const weaponLevel = upgrades.weaponLevels?.[currentWeaponRef.current] || 0;
+          const weaponDmgMult = 1 + (weaponLevel * 0.2); // 20% damage increase per level
+          const totalDamage = weapon.damage * globalDamageMult * weaponDmgMult;
 
           const createBullet = (angleOffset: number) => {
             const angle = playerRef.current.angle + angleOffset;
@@ -394,10 +454,11 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
               y: playerRef.current.y + Math.sin(angle) * 20,
               vx: Math.cos(angle) * weapon.speed,
               vy: Math.sin(angle) * weapon.speed,
-              damage: weapon.damage * damageMult,
+              damage: totalDamage,
               color: rapidFireTimerRef.current > 0 ? '#60a5fa' : weapon.color,
               radius: currentWeaponRef.current === WeaponType.FLAMETHROWER ? 4 : 3,
-              duration: weapon.duration || 1000
+              duration: weapon.duration || 1000,
+              pierce: weapon.pierce || 0
             });
           };
 
@@ -405,6 +466,8 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
             [0, 0.15, -0.15, 0.3, -0.3].forEach(createBullet);
           } else if (currentWeaponRef.current === WeaponType.FLAMETHROWER) {
             createBullet((Math.random() - 0.5) * 0.2);
+          } else if (currentWeaponRef.current === WeaponType.ASSAULT_RIFLE) {
+             createBullet((Math.random() - 0.5) * 0.05);
           } else {
             createBullet(0);
           }
@@ -415,28 +478,28 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
       if (waveStateRef.current === 'SPAWNING' && enemiesToSpawnRef.current > 0) {
         spawnTimerRef.current++;
         let currentSpawnRate = Math.max(30, level.spawnRate - (waveRef.current * 5));
-        if (gameMode === GameMode.TIME_ATTACK) currentSpawnRate = 40; // Fast fixed spawn
+        if (gameMode === GameMode.TIME_ATTACK) currentSpawnRate = 40; 
 
         if (spawnTimerRef.current > currentSpawnRate) {
           spawnTimerRef.current = 0;
           if (gameMode !== GameMode.TIME_ATTACK) enemiesToSpawnRef.current--;
           
-          // Boss Spawn
-          const isBoss = gameMode === GameMode.CAMPAIGN && level.id === 3 && waveRef.current === 5;
+          const isBoss = gameMode === GameMode.CAMPAIGN && level.id === 6 && waveRef.current === 5;
           let type = EnemyType.NORMAL;
           
           if (isBoss) {
              type = EnemyType.BOSS;
           } else {
-             // Random weighted spawn logic
-             const r = Math.random();
              const types = level.enemyTypes;
-             if (types.includes(EnemyType.MUMMY) && r > 0.9) type = EnemyType.MUMMY;
-             else if (types.includes(EnemyType.RED) && r > 0.7) type = EnemyType.RED;
+             // Weighted Random Spawn
+             const rand = Math.random();
+             if (types.includes(EnemyType.MUMMY) && rand > 0.85) type = EnemyType.MUMMY;
+             else if (types.includes(EnemyType.EXPLODER) && rand > 0.75) type = EnemyType.EXPLODER;
+             else if (types.includes(EnemyType.SPITTER) && rand > 0.65) type = EnemyType.SPITTER;
+             else if (types.includes(EnemyType.RED) && rand > 0.50) type = EnemyType.RED;
           }
 
           const stats = ENEMY_STATS[type];
-
           const edge = Math.floor(Math.random() * 4);
           let ex = 0, ey = 0;
           if (edge === 0) { ex = Math.random() * CANVAS_WIDTH; ey = -50; }
@@ -444,7 +507,6 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
           else if (edge === 2) { ex = Math.random() * CANVAS_WIDTH; ey = CANVAS_HEIGHT + 50; }
           else { ex = -50; ey = Math.random() * CANVAS_HEIGHT; }
 
-          // Scale hp with wave in Endless
           let hpMultiplier = diffMod.hp;
           if (gameMode === GameMode.ENDLESS) hpMultiplier += (waveRef.current * 0.2);
 
@@ -457,28 +519,80 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
             speed: stats.speed * diffMod.speed,
             angle: 0,
             hp: stats.hp * hpMultiplier,
-            maxHp: stats.hp * hpMultiplier
+            maxHp: stats.hp * hpMultiplier,
+            attackTimer: 0
           });
         }
       }
 
       // Enemies Update
-      enemiesRef.current.forEach(enemy => {
-        // Freeze effect
+      for (let i = enemiesRef.current.length - 1; i >= 0; i--) {
+        const enemy = enemiesRef.current[i];
+        
         if (freezeTimerRef.current > 0 && enemy.type !== EnemyType.BOSS) {
-           // Don't update position
+            // Frozen
         } else {
-           const angle = Math.atan2(playerRef.current.y - enemy.y, playerRef.current.x - enemy.x);
-           enemy.x += Math.cos(angle) * enemy.speed;
-           enemy.y += Math.sin(angle) * enemy.speed;
-           enemy.angle = angle;
+           let moveAngle = Math.atan2(playerRef.current.y - enemy.y, playerRef.current.x - enemy.x);
+           let speed = enemy.speed;
+
+           // SPITTER Logic: Stop if close enough to shoot
+           if (enemy.type === EnemyType.SPITTER) {
+              const distToPlayer = Math.hypot(playerRef.current.x - enemy.x, playerRef.current.y - enemy.y);
+              if (distToPlayer < 300) {
+                 speed = 0; // Stop to shoot
+                 enemy.attackTimer = (enemy.attackTimer || 0) + 1;
+                 if (enemy.attackTimer > 120) { // Shoot every 2 seconds
+                    enemy.attackTimer = 0;
+                    soundSystem.playShoot('pistol'); // Use pistol sound as placeholder for spit
+                    enemyBulletsRef.current.push({
+                       id: Math.random().toString(),
+                       x: enemy.x, y: enemy.y,
+                       vx: Math.cos(moveAngle) * 4,
+                       vy: Math.sin(moveAngle) * 4,
+                       damage: 15 * diffMod.damage,
+                       color: '#8b5cf6',
+                       radius: 6,
+                       duration: 200,
+                       isEnemy: true
+                    });
+                 }
+              }
+           }
+
+           if (speed > 0) {
+              const nextEX = enemy.x + Math.cos(moveAngle) * speed;
+              const nextEY = enemy.y + Math.sin(moveAngle) * speed;
+              
+              // Simple slide against obstacles
+              let collided = false;
+              for (const obs of obstaclesRef.current) {
+                 if (checkRectCollision(nextEX, nextEY, enemy.radius, obs)) {
+                    collided = true;
+                    // Try X only
+                    if (!checkRectCollision(nextEX, enemy.y, enemy.radius, obs)) {
+                       enemy.x = nextEX;
+                    } 
+                    // Try Y only
+                    else if (!checkRectCollision(enemy.x, nextEY, enemy.radius, obs)) {
+                       enemy.y = nextEY;
+                    }
+                    break;
+                 }
+              }
+              
+              if (!collided) {
+                 enemy.x = nextEX;
+                 enemy.y = nextEY;
+              }
+           }
+           enemy.angle = moveAngle;
         }
 
-        // Boss specific logic
+        // Boss Minion Spawn
         if (enemy.type === EnemyType.BOSS) {
-           if (frameRef.current % 300 === 0) { // Summon minions every 5s
+           if (frameRef.current % 300 === 0) { 
               spawnFloatingText(enemy.x, enemy.y, "ARISE!", "#ff0000", 20);
-              for(let i=0; i<3; i++) {
+              for(let j=0; j<3; j++) {
                  enemiesRef.current.push({
                     id: Math.random().toString(),
                     x: enemy.x + (Math.random() - 0.5) * 50,
@@ -494,41 +608,152 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
            }
         }
 
+        // Player Collision
         const dist = Math.hypot(playerRef.current.x - enemy.x, playerRef.current.y - enemy.y);
         if (dist < playerRef.current.radius + enemy.radius) {
-          if (frameRef.current % 30 === 0) {
-             if (shieldTimerRef.current <= 0) {
-                let dmg = 10 * diffMod.damage;
-                if (enemy.type === EnemyType.BOSS) dmg = 30 * diffMod.damage;
-                playerRef.current.hp -= dmg; 
-                statsRef.current.damageTaken += dmg;
-                addShake(10);
-                soundSystem.playPlayerHit();
-                spawnBlood(playerRef.current.x, playerRef.current.y, '#ef4444');
-                spawnFloatingText(playerRef.current.x, playerRef.current.y, `-${Math.ceil(dmg)}`, 'red');
-                
-                if (playerRef.current.hp <= 0) {
-                  onGameOver(statsRef.current, 'defeat');
-                }
-             } else {
-                soundSystem.playPickup('powerup'); // Shield hit sound
-                spawnFloatingText(playerRef.current.x, playerRef.current.y, "BLOCKED", "#8b5cf6");
-             }
-          }
+           // Exploder Logic: Boom on contact
+           if (enemy.type === EnemyType.EXPLODER) {
+              enemy.hp = 0; // Will trigger death logic below
+           } else {
+              if (frameRef.current % 30 === 0) {
+                 if (shieldTimerRef.current <= 0) {
+                    let dmg = 10 * diffMod.damage;
+                    if (enemy.type === EnemyType.BOSS) dmg = 30 * diffMod.damage;
+                    playerRef.current.hp -= dmg; 
+                    statsRef.current.damageTaken += dmg;
+                    addShake(10);
+                    soundSystem.playPlayerHit();
+                    spawnBlood(playerRef.current.x, playerRef.current.y, '#ef4444');
+                    spawnFloatingText(playerRef.current.x, playerRef.current.y, `-${Math.ceil(dmg)}`, 'red');
+                    
+                    if (playerRef.current.hp <= 0) {
+                      onGameOver(statsRef.current, 'defeat');
+                    }
+                 } else {
+                    soundSystem.playPickup('powerup'); 
+                    spawnFloatingText(playerRef.current.x, playerRef.current.y, "BLOCKED", "#8b5cf6");
+                 }
+              }
+           }
         }
-      });
 
-      // Bullets
+        // Death Check (Moved here to handle Exploder logic consistently)
+        if (enemy.hp <= 0) {
+           let s = ENEMY_STATS[enemy.type!].score * diffMod.score;
+           if (doublePointsTimerRef.current > 0) s *= 2;
+           
+           scoreRef.current += s;
+           statsRef.current.score = scoreRef.current;
+           statsRef.current.kills++;
+           
+           comboRef.current.count++;
+           comboRef.current.timer = 120; 
+           if (comboRef.current.count > statsRef.current.maxCombo) statsRef.current.maxCombo = comboRef.current.count;
+           if (comboRef.current.count > 1) {
+              spawnFloatingText(enemy.x, enemy.y - 20, `${comboRef.current.count}x COMBO!`, '#facc15', 16 + Math.min(comboRef.current.count, 20));
+              if (comboRef.current.count % 5 === 0) soundSystem.playCombo(comboRef.current.count);
+           }
+
+           // Exploder Death Effect
+           if (enemy.type === EnemyType.EXPLODER) {
+               addShake(15);
+               soundSystem.playShoot('shotgun'); // Explosion sound
+               spawnFloatingText(enemy.x, enemy.y, "BOOM!", "#10b981", 24);
+               // Damage player if close
+               if (Math.hypot(playerRef.current.x - enemy.x, playerRef.current.y - enemy.y) < 80 && shieldTimerRef.current <= 0) {
+                   playerRef.current.hp -= 25 * diffMod.damage;
+                   statsRef.current.damageTaken += 25;
+                   spawnFloatingText(playerRef.current.x, playerRef.current.y, "-25", "red");
+               }
+               // Damage other enemies
+               enemiesRef.current.forEach(other => {
+                   if (other !== enemy && Math.hypot(other.x - enemy.x, other.y - enemy.y) < 100) {
+                       other.hp -= 100;
+                   }
+               });
+           }
+
+           spawnItem(enemy.x, enemy.y); 
+           enemiesRef.current.splice(i, 1);
+        }
+      }
+
+      // Enemy Bullets (Spitters)
+      for (let i = enemyBulletsRef.current.length - 1; i >= 0; i--) {
+         const b = enemyBulletsRef.current[i];
+         b.x += b.vx; b.y += b.vy; b.duration--;
+         
+         // Check obstacle collision
+         let hitObs = false;
+         for (const obs of obstaclesRef.current) {
+            if (checkRectCollision(b.x, b.y, b.radius, obs)) {
+               hitObs = true;
+               break;
+            }
+         }
+
+         if (b.duration <= 0 || hitObs) {
+            enemyBulletsRef.current.splice(i, 1);
+            continue;
+         }
+
+         const dist = Math.hypot(b.x - playerRef.current.x, b.y - playerRef.current.y);
+         if (dist < playerRef.current.radius + b.radius) {
+            if (shieldTimerRef.current <= 0) {
+               playerRef.current.hp -= b.damage;
+               statsRef.current.damageTaken += b.damage;
+               addShake(5);
+               soundSystem.playPlayerHit();
+               spawnFloatingText(playerRef.current.x, playerRef.current.y, `-${Math.ceil(b.damage)}`, "red");
+            } else {
+               spawnFloatingText(playerRef.current.x, playerRef.current.y, "BLOCKED", "#8b5cf6");
+            }
+            enemyBulletsRef.current.splice(i, 1);
+         }
+      }
+
+      // Player Bullets
       for (let i = bulletsRef.current.length - 1; i >= 0; i--) {
         const b = bulletsRef.current[i];
         b.x += b.vx; b.y += b.vy; b.duration--;
 
+        let destroyed = false;
+
         if (b.x < 0 || b.x > CANVAS_WIDTH || b.y < 0 || b.y > CANVAS_HEIGHT || (currentWeaponRef.current === WeaponType.FLAMETHROWER && b.duration <= 0)) {
-          bulletsRef.current.splice(i, 1);
-          continue;
+          destroyed = true;
         }
 
-        let hit = false;
+        // Obstacle Collision
+        if (!destroyed) {
+           for (const obs of obstaclesRef.current) {
+              if (checkRectCollision(b.x, b.y, b.radius, obs)) {
+                 if (obs.type === 'CRATE' && obs.hp !== undefined) {
+                    obs.hp -= b.damage;
+                    spawnFloatingText(obs.x + obs.width/2, obs.y, Math.ceil(b.damage).toString(), 'orange', 10);
+                    if (obs.hp <= 0) {
+                       // Break Crate
+                       soundSystem.playShoot('shotgun'); // break sound
+                       // Remove crate
+                       const idx = obstaclesRef.current.indexOf(obs);
+                       if (idx > -1) obstaclesRef.current.splice(idx, 1);
+                       spawnItem(obs.x + obs.width/2, obs.y + obs.height/2);
+                       spawnBlood(obs.x + obs.width/2, obs.y + obs.height/2, '#854d0e', 8); // Wood particles
+                    }
+                 }
+                 destroyed = true;
+                 break;
+              }
+           }
+        }
+
+        if (destroyed) {
+           bulletsRef.current.splice(i, 1);
+           continue;
+        }
+
+        let hitCount = 0;
+        const maxHits = 1 + (b.pierce || 0);
+
         for (let j = enemiesRef.current.length - 1; j >= 0; j--) {
           const enemy = enemiesRef.current[j];
           const dist = Math.hypot(b.x - enemy.x, b.y - enemy.y);
@@ -536,36 +761,19 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
           if (dist < enemy.radius + b.radius) {
             enemy.hp -= b.damage;
             spawnBlood(enemy.x, enemy.y, '#166534');
-            hit = true;
             statsRef.current.shotsHit++;
             soundSystem.playEnemyHit();
-            
             spawnFloatingText(enemy.x, enemy.y, Math.ceil(b.damage).toString(), 'white', 12);
 
-            if (enemy.hp <= 0) {
-              let s = ENEMY_STATS[enemy.type!].score * diffMod.score;
-              if (doublePointsTimerRef.current > 0) s *= 2;
-              
-              scoreRef.current += s;
-              statsRef.current.score = scoreRef.current;
-              statsRef.current.kills++;
-              
-              // Combo Logic
-              comboRef.current.count++;
-              comboRef.current.timer = 120; // 2 seconds to keep combo
-              if (comboRef.current.count > statsRef.current.maxCombo) statsRef.current.maxCombo = comboRef.current.count;
-              if (comboRef.current.count > 1) {
-                 spawnFloatingText(enemy.x, enemy.y - 20, `${comboRef.current.count}x COMBO!`, '#facc15', 16 + Math.min(comboRef.current.count, 20));
-                 if (comboRef.current.count % 5 === 0) soundSystem.playCombo(comboRef.current.count);
-              }
-
-              spawnItem(enemy.x, enemy.y); 
-              enemiesRef.current.splice(j, 1);
+            hitCount++;
+            
+            // Handling death is done in Enemy Update loop to avoid splicing issues here if piercing
+            if (hitCount >= maxHits) {
+               bulletsRef.current.splice(i, 1);
+               break;
             }
-            break; 
           }
         }
-        if (hit && currentWeaponRef.current !== WeaponType.FLAMETHROWER) bulletsRef.current.splice(i, 1);
       }
 
       // Items
@@ -581,12 +789,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
              playerRef.current.hp = Math.min(playerRef.current.maxHp, playerRef.current.hp + stats.heal!);
              soundSystem.playPickup('health');
            } else if (item.type === ItemType.NUKE) {
-             enemiesRef.current.forEach(e => {
-               scoreRef.current += ENEMY_STATS[e.type!].score;
-               spawnBlood(e.x, e.y, '#166534', 10);
-               statsRef.current.kills++;
-             });
-             enemiesRef.current = [];
+             enemiesRef.current.forEach(e => e.hp = 0); // Set to 0 to trigger death loop
              addShake(20);
              soundSystem.playPickup('nuke');
            } else if (item.type === ItemType.RAPID_FIRE) {
@@ -616,7 +819,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
         if (item.life <= 0) itemsRef.current.splice(i, 1);
       }
 
-      // Floating Text
+      // Floating Text Physics
       for (let i = floatingTextsRef.current.length - 1; i >= 0; i--) {
          const ft = floatingTextsRef.current[i];
          ft.y += ft.vy;
@@ -624,9 +827,9 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          if (ft.life <= 0) floatingTextsRef.current.splice(i, 1);
       }
 
-      // Draw items, particles, entities (same as before but simplified for brevity)
-      // ... (Drawing code assumed mostly preserved from previous turn, adding FloatingText drawing)
+      // --- RENDERING (Items, Particles, Enemies, Player, Bullets, FloatingText, Minimap) ---
 
+      // Items
       itemsRef.current.forEach(item => {
         const stats = ITEM_STATS[item.type];
         const floatY = Math.sin(frameRef.current * 0.1) * 3;
@@ -643,23 +846,35 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
         ctx.restore();
       });
 
+      // Particles
       particlesRef.current.forEach(p => {
         ctx.fillStyle = p.color; ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
       });
 
+      // Enemies
       enemiesRef.current.forEach(enemy => {
         ctx.save();
         ctx.translate(enemy.x, enemy.y);
         ctx.rotate(enemy.angle);
-        // Boss Visuals
+        
         if (enemy.type === EnemyType.BOSS) {
            ctx.shadowBlur = 15; ctx.shadowColor = 'red';
            ctx.fillStyle = enemy.color;
            ctx.beginPath(); ctx.arc(0, 0, enemy.radius, 0, Math.PI*2); ctx.fill();
-           // Skull mark on boss
            ctx.fillStyle = 'black'; ctx.font = '30px Arial'; ctx.textAlign='center'; ctx.textBaseline='middle';
            ctx.fillText('☠', 0, 0);
+        } else if (enemy.type === EnemyType.EXPLODER) {
+           // Pulsing effect
+           const pulse = Math.sin(frameRef.current * 0.2) * 3;
+           ctx.fillStyle = enemy.color;
+           ctx.beginPath(); ctx.arc(0, 0, enemy.radius + pulse, 0, Math.PI * 2); ctx.fill();
+           ctx.fillStyle = '#fff'; ctx.fillRect(-5, -5, 10, 10); // White core
+        } else if (enemy.type === EnemyType.SPITTER) {
+           ctx.fillStyle = enemy.color;
+           ctx.beginPath(); ctx.arc(0, 0, enemy.radius, 0, Math.PI * 2); ctx.fill();
+           // Mouth
+           ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(8, 0, 4, 0, Math.PI*2); ctx.fill();
         } else {
            ctx.fillStyle = freezeTimerRef.current > 0 ? '#06b6d4' : enemy.color;
            ctx.beginPath(); ctx.arc(0, 0, enemy.radius, 0, Math.PI * 2); ctx.fill();
@@ -667,6 +882,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
            ctx.fillRect(0, -enemy.radius, enemy.radius + 5, 8); 
            ctx.fillRect(0, enemy.radius - 8, enemy.radius + 5, 8);
         }
+        
         if (enemy.hp < enemy.maxHp) {
            ctx.fillStyle = 'red'; ctx.fillRect(-15, -enemy.radius - 10, 30, 4);
            ctx.fillStyle = 'lime'; ctx.fillRect(-15, -enemy.radius - 10, 30 * (enemy.hp/enemy.maxHp), 4);
@@ -677,100 +893,84 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
       // Player
       ctx.save();
       ctx.translate(playerRef.current.x, playerRef.current.y);
-      
-      // Shield Visual
       if (shieldTimerRef.current > 0) {
          ctx.strokeStyle = `rgba(139, 92, 246, ${Math.abs(Math.sin(frameRef.current * 0.1))})`;
          ctx.lineWidth = 3;
          ctx.beginPath(); ctx.arc(0, 0, playerRef.current.radius + 10, 0, Math.PI*2); ctx.stroke();
       }
-
       if (reloadTimerRef.current > 0) {
         const maxTime = WEAPON_STATS[currentWeaponRef.current].reloadTime;
         const progress = 1 - (reloadTimerRef.current / maxTime);
         ctx.fillStyle = 'black'; ctx.fillRect(-15, -30, 30, 6);
         ctx.fillStyle = 'yellow'; ctx.fillRect(-14, -29, 28 * progress, 4);
       }
-
       ctx.rotate(playerRef.current.angle);
-      const walkAnim = Math.sin(frameRef.current * 0.2) * 5;
       ctx.fillStyle = '#1e3a8a';
-      if (dx !== 0 || dy !== 0) {
-         ctx.fillRect(-5, 8 + walkAnim, 10, 5);
-         ctx.fillRect(-5, -12 - walkAnim, 10, 5);
-      }
+      ctx.fillRect(-5, 8, 10, 5); ctx.fillRect(-5, -12, 10, 5); // feet
       ctx.fillStyle = rapidFireTimerRef.current > 0 ? '#93c5fd' : playerRef.current.color; 
       ctx.beginPath(); ctx.arc(0, 0, playerRef.current.radius, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#94a3b8'; ctx.fillRect(0, -4, 25, 8);
-      
-      // Muzzle Flash
+      ctx.fillStyle = '#94a3b8'; ctx.fillRect(0, -4, 25, 8); // Gun barrel
       if (frameRef.current - lastShotTimeRef.current < 5) {
          ctx.fillStyle = '#fef08a';
          ctx.beginPath(); ctx.arc(28, 0, 8 + Math.random()*5, 0, Math.PI*2); ctx.fill();
       }
       ctx.restore();
 
+      // Bullets
       bulletsRef.current.forEach(b => {
         ctx.fillStyle = b.color;
         ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill();
       });
 
-      // Floating Text Draw
+      enemyBulletsRef.current.forEach(b => {
+        ctx.fillStyle = b.color;
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill();
+      });
+
+      // Text
       floatingTextsRef.current.forEach(ft => {
          ctx.save();
          ctx.globalAlpha = Math.max(0, ft.life / 30);
          ctx.fillStyle = ft.color;
          ctx.font = `bold ${ft.size}px Arial`;
-         ctx.strokeStyle = 'black';
-         ctx.lineWidth = 2;
+         ctx.strokeStyle = 'black'; ctx.lineWidth = 2;
          ctx.textAlign = 'center';
          ctx.strokeText(ft.text, ft.x, ft.y);
          ctx.fillText(ft.text, ft.x, ft.y);
          ctx.restore();
       });
 
-      // MINIMAP
+      // Minimap
       const mapSize = 120;
       const mapPadding = 20;
       const mapX = CANVAS_WIDTH - mapSize - mapPadding;
       const mapY = mapPadding;
-      
       ctx.save();
       ctx.fillStyle = 'rgba(0, 20, 0, 0.7)';
       ctx.strokeStyle = '#4ade80';
       ctx.lineWidth = 2;
       ctx.fillRect(mapX, mapY, mapSize, mapSize);
       ctx.strokeRect(mapX, mapY, mapSize, mapSize);
-      
-      // Map scale factor
       const scaleX = mapSize / CANVAS_WIDTH;
       const scaleY = mapSize / CANVAS_HEIGHT;
       
-      // Draw Player on Map
-      ctx.fillStyle = '#60a5fa';
-      ctx.beginPath(); 
-      ctx.arc(mapX + playerRef.current.x * scaleX, mapY + playerRef.current.y * scaleY, 3, 0, Math.PI*2); 
-      ctx.fill();
+      // Draw walls on map
+      ctx.fillStyle = '#4b5563';
+      obstaclesRef.current.forEach(obs => {
+         ctx.fillRect(mapX + obs.x * scaleX, mapY + obs.y * scaleY, obs.width * scaleX, obs.height * scaleY);
+      });
 
-      // Draw Enemies on Map
+      ctx.fillStyle = '#60a5fa';
+      ctx.beginPath(); ctx.arc(mapX + playerRef.current.x * scaleX, mapY + playerRef.current.y * scaleY, 3, 0, Math.PI*2); ctx.fill();
       ctx.fillStyle = '#ef4444';
       enemiesRef.current.forEach(e => {
          ctx.fillRect(mapX + e.x * scaleX - 1.5, mapY + e.y * scaleY - 1.5, 3, 3);
       });
-
-      // Draw Items on Map
-      ctx.fillStyle = '#eab308';
-      itemsRef.current.forEach(i => {
-         ctx.beginPath(); 
-         ctx.arc(mapX + i.x * scaleX, mapY + i.y * scaleY, 2, 0, Math.PI*2); 
-         ctx.fill();
-      });
-      
       ctx.restore();
 
       ctx.restore();
 
-      // State Sync
+      // Sync State
       setHp(playerRef.current.hp);
       setScore(scoreRef.current);
       setWave(waveRef.current);
@@ -822,7 +1022,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, game
          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
              <div className="bg-black/70 p-6 rounded text-center border-y-4 border-green-600 w-full backdrop-blur-sm">
                <h3 className="text-4xl font-bold text-green-500 mb-2">WAVE {wave} CLEARED</h3>
-               {gameMode === GameMode.CAMPAIGN && level.id === 3 && wave === 4 
+               {gameMode === GameMode.CAMPAIGN && level.id === 6 && wave === 4 
                  ? <p className="text-red-500 text-2xl animate-pulse font-bold">WARNING: MASSIVE SIGNAL DETECTED</p>
                  : <p className="text-white text-xl animate-pulse">NEXT WAVE IN {intermissionTimeUI}...</p>
                }
