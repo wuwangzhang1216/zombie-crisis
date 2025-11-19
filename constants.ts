@@ -1,8 +1,10 @@
 
-import { LevelConfig, EnemyType, WeaponType, ItemType, GameSettings, Difficulty } from './types';
+import { LevelConfig, EnemyType, WeaponType, ItemType, GameSettings, Difficulty, Achievement } from './types';
 
 export const CANVAS_WIDTH = 800;
 export const CANVAS_HEIGHT = 600;
+
+export const TIME_ATTACK_LIMIT = 180; // 3 minutes
 
 export const LEVELS: LevelConfig[] = [
   {
@@ -87,7 +89,8 @@ export const ITEM_STATS = {
   [ItemType.RAPID_FIRE]: { color: '#3b82f6', radius: 12, heal: 0, score: 0, chance: 0.03, duration: 300, symbol: '⚡' },
   [ItemType.AMMO]: { color: '#a8a29e', radius: 12, heal: 0, score: 0, chance: 0.08, symbol: '▮' },
   [ItemType.DOUBLE_POINTS]: { color: '#eab308', radius: 12, heal: 0, score: 0, chance: 0.02, duration: 600, symbol: '2x' },
-  [ItemType.SHIELD]: { color: '#8b5cf6', radius: 12, heal: 0, score: 0, chance: 0.02, duration: 300, symbol: '🛡️' }
+  [ItemType.SHIELD]: { color: '#8b5cf6', radius: 12, heal: 0, score: 0, chance: 0.02, duration: 300, symbol: '🛡️' },
+  [ItemType.FREEZE]: { color: '#06b6d4', radius: 12, heal: 0, score: 0, chance: 0.02, duration: 300, symbol: '❄️' }
 };
 
 export const PLAYER_SPEED = 3.5;
@@ -120,3 +123,11 @@ export const DIFFICULTY_MODIFIERS = {
   [Difficulty.NORMAL]: { hp: 1.0, speed: 1.0, damage: 1.0, score: 1.0 },
   [Difficulty.HARD]: { hp: 1.4, speed: 1.2, damage: 1.5, score: 1.5 }
 };
+
+export const ACHIEVEMENTS: Achievement[] = [
+  { id: 'FIRST_BLOOD', name: 'First Blood', description: 'Eliminate your first zombie.', icon: 'Skull' },
+  { id: 'PISTOL_PRO', name: 'Pistol Pro', description: 'Complete a level using ONLY the pistol.', icon: 'Crosshair' },
+  { id: 'SURVIVOR', name: 'Untouchable', description: 'Complete a level without taking any damage.', icon: 'Shield' },
+  { id: 'SLAUGHTER', name: 'Massacre', description: 'Accumulate 500 total kills.', icon: 'Zap' },
+  { id: 'IRON_WILL', name: 'Iron Will', description: 'Reach Wave 10 in Endless Mode.', icon: 'Crown' }
+];

@@ -2,24 +2,29 @@
 import React, { useState, useEffect } from 'react';
 import GameEngine from './components/GameEngine';
 import BriefingModal from './components/BriefingModal';
-import { GameState, LevelConfig, GameSettings, Difficulty, GameStats, PlayerUpgrades } from './types';
-import { LEVELS, CANVAS_WIDTH, DEFAULT_SETTINGS, UPGRADE_CONFIG } from './constants';
+import { GameState, LevelConfig, GameSettings, Difficulty, GameStats, PlayerUpgrades, GameMode, Achievement, WeaponType } from './types';
+import { LEVELS, CANVAS_WIDTH, DEFAULT_SETTINGS, UPGRADE_CONFIG, ACHIEVEMENTS } from './constants';
 import { soundSystem } from './services/SoundSystem';
-import { Gamepad2, Skull, Trophy, Crown, Settings as SettingsIcon, X, Volume2, Gauge, Monitor, ShoppingCart, Crosshair, Shield, Zap } from 'lucide-react';
+import { Gamepad2, Skull, Trophy, Crown, Settings as SettingsIcon, X, Volume2, Gauge, Monitor, ShoppingCart, Crosshair, Shield, Zap, Timer, Activity, Lock } from 'lucide-react';
 
 const DEFAULT_UPGRADES: PlayerUpgrades = { health: 0, speed: 0, damage: 0 };
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
   const [currentLevel, setCurrentLevel] = useState<LevelConfig>(LEVELS[0]);
+  const [currentGameMode, setCurrentGameMode] = useState<GameMode>(GameMode.CAMPAIGN);
   const [lastStats, setLastStats] = useState<GameStats | null>(null);
   
   const [highScore, setHighScore] = useState(0);
   const [credits, setCredits] = useState(0);
   const [upgrades, setUpgrades] = useState<PlayerUpgrades>(DEFAULT_UPGRADES);
+  const [unlockedAchievements, setUnlockedAchievements] = useState<string[]>([]);
   
   const [showSettings, setShowSettings] = useState(false);
   const [showArmory, setShowArmory] = useState(false);
+  const [showAchievements, setShowAchievements] = useState(false);
+  const [showModeSelect, setShowModeSelect] = useState(false);
+  
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
@@ -31,6 +36,9 @@ const App: React.FC = () => {
 
     const savedUpgrades = localStorage.getItem('zombie_crisis_upgrades');
     if (savedUpgrades) setUpgrades(JSON.parse(savedUpgrades));
+    
+    const savedAchievements = localStorage.getItem('zombie_crisis_achievements');
+    if (savedAchievements) setUnlockedAchievements(JSON.parse(savedAchievements));
 
     const savedSettings = localStorage.getItem('zombie_crisis_settings');
     if (savedSettings) {
@@ -66,18 +74,49 @@ const App: React.FC = () => {
     }
   };
 
-  const startGame = (levelId: number) => {
+  const startGame = (levelId: number, mode: GameMode) => {
     const level = LEVELS.find(l => l.id === levelId) || LEVELS[0];
     setCurrentLevel(level);
+    setCurrentGameMode(mode);
     setGameState(GameState.BRIEFING);
+    setShowModeSelect(false);
   };
 
   const handleBriefingComplete = () => {
     setGameState(GameState.PLAYING);
   };
 
+  const checkAchievements = (stats: GameStats) => {
+    const newUnlocks: string[] = [];
+    
+    ACHIEVEMENTS.forEach(ach => {
+      if (unlockedAchievements.includes(ach.id)) return;
+
+      let unlocked = false;
+      if (ach.id === 'FIRST_BLOOD' && stats.kills > 0) unlocked = true;
+      if (ach.id === 'SLAUGHTER') {
+         // Needs persistent tracking, for now checking single run for simplicity or assume stats.kills is cumulative if we loaded total kills
+         // Simple implementation: Check single run for now
+         if (stats.kills >= 500) unlocked = true;
+      }
+      if (ach.id === 'PISTOL_PRO' && stats.weaponsUsed.length === 1 && stats.weaponsUsed.includes(WeaponType.PISTOL) && stats.score > 0) unlocked = true;
+      if (ach.id === 'SURVIVOR' && stats.damageTaken === 0 && stats.score > 0) unlocked = true;
+      if (ach.id === 'IRON_WILL' && currentGameMode === GameMode.ENDLESS && stats.waveReached >= 10) unlocked = true;
+
+      if (unlocked) newUnlocks.push(ach.id);
+    });
+
+    if (newUnlocks.length > 0) {
+       const updated = [...unlockedAchievements, ...newUnlocks];
+       setUnlockedAchievements(updated);
+       localStorage.setItem('zombie_crisis_achievements', JSON.stringify(updated));
+       soundSystem.playUnlock();
+    }
+  };
+
   const handleGameOver = (stats: GameStats, reason: 'victory' | 'defeat') => {
     setLastStats(stats);
+    checkAchievements(stats);
     
     // 10% of score converted to credits
     const earnedCredits = Math.floor(stats.score * 0.1);
@@ -90,19 +129,16 @@ const App: React.FC = () => {
       localStorage.setItem('zombie_crisis_highscore', stats.score.toString());
     }
     
-    if (reason === 'victory') {
+    if (reason === 'victory' && currentGameMode === GameMode.CAMPAIGN) {
       // If level 3 is beat, go to victory screen, else next level
       if (currentLevel.id === 3) {
          setGameState(GameState.VICTORY);
       } else {
-         // Automatically advance logic or return to menu? 
-         // Let's show victory report first, then button to next level if exists
          const nextLevel = LEVELS.find(l => l.id === currentLevel.id + 1);
          if (nextLevel) {
            setCurrentLevel(nextLevel);
-           // We use a special state or just handle it in the UI
          }
-         setGameState(GameState.GAME_OVER); // Reusing Game Over screen for Mission Report
+         setGameState(GameState.GAME_OVER); 
       }
     } else {
       setGameState(GameState.GAME_OVER);
@@ -114,6 +150,18 @@ const App: React.FC = () => {
     const config = UPGRADE_CONFIG[type];
     if (level >= config.maxLevel) return 'MAX';
     return Math.floor(config.baseCost * Math.pow(config.costMult, level));
+  };
+  
+  const getAchievementIcon = (iconName: string) => {
+     switch(iconName) {
+        case 'Skull': return <Skull />;
+        case 'Crosshair': return <Crosshair />;
+        case 'Shield': return <Shield />;
+        case 'Zap': return <Zap />;
+        case 'Crown': return <Crown />;
+        case 'Activity': return <Activity />;
+        default: return <Trophy />;
+     }
   };
 
   return (
@@ -131,9 +179,12 @@ const App: React.FC = () => {
 
       <div className="relative" style={{ width: Math.min(window.innerWidth - 32, CANVAS_WIDTH) }}>
         
-        {gameState === GameState.MENU && !showArmory && (
+        {gameState === GameState.MENU && !showArmory && !showAchievements && !showModeSelect && (
           <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-zinc-800 p-8 shadow-2xl relative">
             <div className="absolute top-4 right-4 flex gap-2">
+              <button onClick={() => setShowAchievements(true)} className="text-yellow-500 hover:text-white bg-zinc-800 p-2 rounded border border-zinc-700">
+                <Trophy size={24} />
+              </button>
               <button onClick={() => setShowArmory(true)} className="text-green-500 hover:text-white bg-zinc-800 p-2 rounded border border-zinc-700">
                 <ShoppingCart size={24} />
               </button>
@@ -142,25 +193,61 @@ const App: React.FC = () => {
               </button>
             </div>
 
-            <h2 className="text-3xl text-green-500 mb-6 border-b border-zinc-700 pb-4">SELECT OPERATION</h2>
+            <h2 className="text-3xl text-green-500 mb-6 border-b border-zinc-700 pb-4">MAIN MENU</h2>
             <div className="grid gap-4">
-              {LEVELS.map((level) => (
                 <button
-                  key={level.id}
-                  onClick={() => startGame(level.id)}
+                  onClick={() => setShowModeSelect(true)}
                   className="group flex items-center justify-between p-4 bg-black border border-zinc-700 hover:border-green-500 hover:bg-zinc-900 transition-all text-left"
                 >
                   <div>
-                    <div className="text-2xl text-zinc-200 group-hover:text-green-400 font-bold">{level.id}. {level.name}</div>
-                    <div className="text-lg text-zinc-500">{level.description}</div>
+                    <div className="text-2xl text-zinc-200 group-hover:text-green-400 font-bold">CAMPAIGN</div>
+                    <div className="text-lg text-zinc-500">Story Mode. Clear sectors.</div>
                   </div>
                   <div className="text-zinc-600 group-hover:text-green-500">
                     <Gamepad2 size={32} />
                   </div>
                 </button>
-              ))}
+                
+                <div className="grid grid-cols-2 gap-4">
+                   <button
+                     onClick={() => startGame(3, GameMode.ENDLESS)}
+                     className="group p-4 bg-black border border-zinc-700 hover:border-purple-500 hover:bg-zinc-900 transition-all text-left"
+                   >
+                     <div className="text-xl text-purple-400 font-bold flex items-center gap-2"><Activity /> ENDLESS</div>
+                     <div className="text-sm text-zinc-500">Survive infinite waves.</div>
+                   </button>
+
+                   <button
+                     onClick={() => startGame(2, GameMode.TIME_ATTACK)}
+                     className="group p-4 bg-black border border-zinc-700 hover:border-blue-500 hover:bg-zinc-900 transition-all text-left"
+                   >
+                     <div className="text-xl text-blue-400 font-bold flex items-center gap-2"><Timer /> TIME ATTACK</div>
+                     <div className="text-sm text-zinc-500">3 Minutes. Max Kills.</div>
+                   </button>
+                </div>
             </div>
           </div>
+        )}
+
+        {showModeSelect && (
+           <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-zinc-800 p-8 shadow-2xl relative">
+              <button onClick={() => setShowModeSelect(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white"><X size={24}/></button>
+              <h2 className="text-3xl text-green-500 mb-6 border-b border-zinc-700 pb-4">SELECT CAMPAIGN MISSION</h2>
+              <div className="grid gap-4">
+                {LEVELS.map((level) => (
+                  <button
+                    key={level.id}
+                    onClick={() => startGame(level.id, GameMode.CAMPAIGN)}
+                    className="group flex items-center justify-between p-4 bg-black border border-zinc-700 hover:border-green-500 hover:bg-zinc-900 transition-all text-left"
+                  >
+                    <div>
+                      <div className="text-2xl text-zinc-200 group-hover:text-green-400 font-bold">{level.id}. {level.name}</div>
+                      <div className="text-lg text-zinc-500">{level.description}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+           </div>
         )}
 
         {showArmory && (
@@ -200,6 +287,29 @@ const App: React.FC = () => {
                ))}
              </div>
           </div>
+        )}
+
+        {showAchievements && (
+           <div className="w-full max-w-3xl mx-auto bg-zinc-900 border-4 border-yellow-600 p-8 shadow-2xl relative">
+             <button onClick={() => setShowAchievements(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white"><X size={24}/></button>
+             <h2 className="text-3xl text-yellow-500 mb-6 flex items-center gap-3"><Trophy /> SERVICE RECORDS</h2>
+             <div className="grid grid-cols-1 gap-4">
+                {ACHIEVEMENTS.map(ach => {
+                   const isUnlocked = unlockedAchievements.includes(ach.id);
+                   return (
+                     <div key={ach.id} className={`p-4 border ${isUnlocked ? 'border-yellow-500 bg-yellow-900/20' : 'border-zinc-800 bg-black'} flex items-center gap-4`}>
+                        <div className={`p-3 rounded-full ${isUnlocked ? 'bg-yellow-500 text-black' : 'bg-zinc-800 text-zinc-600'}`}>
+                           {isUnlocked ? getAchievementIcon(ach.icon) : <Lock size={20} />}
+                        </div>
+                        <div>
+                           <h3 className={`text-xl font-bold ${isUnlocked ? 'text-yellow-400' : 'text-zinc-600'}`}>{ach.name}</h3>
+                           <p className="text-zinc-500">{ach.description}</p>
+                        </div>
+                     </div>
+                   )
+                })}
+             </div>
+           </div>
         )}
 
         {showSettings && (
@@ -244,13 +354,13 @@ const App: React.FC = () => {
         )}
 
         {gameState === GameState.PLAYING && (
-          <GameEngine level={currentLevel} settings={settings} upgrades={upgrades} onGameOver={handleGameOver} />
+          <GameEngine level={currentLevel} settings={settings} upgrades={upgrades} gameMode={currentGameMode} onGameOver={handleGameOver} />
         )}
 
         {gameState === GameState.GAME_OVER && lastStats && (
           <div className="w-full max-w-2xl mx-auto bg-zinc-900 border-4 border-red-900 p-8 shadow-2xl text-center animate-in fade-in zoom-in duration-300">
             <h2 className="text-6xl text-red-600 font-bold mb-2">MISSION REPORT</h2>
-            <p className="text-zinc-400 text-xl mb-8 uppercase tracking-widest">{currentLevel.name}</p>
+            <p className="text-zinc-400 text-xl mb-8 uppercase tracking-widest">{currentLevel.name} // {currentGameMode}</p>
             
             <div className="grid grid-cols-2 gap-4 text-left mb-8 bg-black/50 p-6 border border-red-900/50">
                <div>
@@ -281,8 +391,11 @@ const App: React.FC = () => {
 
             <div className="flex justify-center gap-4">
               <button onClick={() => setGameState(GameState.MENU)} className="px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold border border-zinc-600">RETURN TO BASE</button>
-              {currentLevel.id < 3 && lastStats.score > 0 && ( // Simple check if we won roughly
-                <button onClick={() => startGame(currentLevel.id + 1)} className="px-8 py-3 bg-red-700 hover:bg-red-600 text-white font-bold border border-red-500">NEXT MISSION</button>
+              {currentGameMode === GameMode.CAMPAIGN && currentLevel.id < 3 && lastStats.score > 0 && ( 
+                <button onClick={() => startGame(currentLevel.id + 1, GameMode.CAMPAIGN)} className="px-8 py-3 bg-red-700 hover:bg-red-600 text-white font-bold border border-red-500">NEXT MISSION</button>
+              )}
+              {currentGameMode !== GameMode.CAMPAIGN && (
+                <button onClick={() => startGame(currentLevel.id, currentGameMode)} className="px-8 py-3 bg-red-700 hover:bg-red-600 text-white font-bold border border-red-500">RETRY</button>
               )}
             </div>
           </div>
@@ -292,10 +405,10 @@ const App: React.FC = () => {
           <div className="w-full max-w-2xl mx-auto bg-black border-4 border-yellow-600 p-8 shadow-2xl text-center animate-in fade-in zoom-in duration-500">
             <Trophy size={80} className="text-yellow-500 mx-auto mb-4 animate-bounce" />
             <h2 className="text-6xl text-yellow-500 font-bold mb-2">VICTORY</h2>
-            <p className="text-green-400 text-2xl mb-8">CAMPAIGN COMPLETE</p>
+            <p className="text-green-400 text-2xl mb-8">{currentGameMode === GameMode.TIME_ATTACK ? 'TIME UP!' : 'CAMPAIGN COMPLETE'}</p>
             
             <div className="bg-zinc-900 p-6 border border-yellow-900/50 mb-8">
-              <p className="text-zinc-400 text-sm">FINAL CAMPAIGN SCORE</p>
+              <p className="text-zinc-400 text-sm">FINAL SCORE</p>
               <p className="text-5xl text-white">{lastStats.score}</p>
               <p className="text-green-500 mt-2">CREDITS SECURED: +{Math.floor(lastStats.score * 0.1)}</p>
             </div>

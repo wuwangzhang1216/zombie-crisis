@@ -208,6 +208,16 @@ class SoundSystem {
       this.playOscillator('square', 800, 1200, 0.15, 0.4);
     }
   }
+  
+  public playFreeze() {
+    this.playOscillator('sine', 800, 200, 0.5, 0.5);
+    this.playNoise(0.5);
+  }
+
+  public playUnlock() {
+    this.playOscillator('square', 440, 880, 0.1, 0.5);
+    setTimeout(() => this.playOscillator('square', 880, 1760, 0.3, 0.5), 100);
+  }
 
   public playBossRoar() {
     this.playOscillator('sawtooth', 100, 20, 1.5, 0.8);

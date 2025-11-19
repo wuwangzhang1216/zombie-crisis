@@ -1,13 +1,15 @@
+
 import React, { useRef, useEffect, useState } from 'react';
-import { LevelConfig, Entity, Bullet, Particle, WeaponType, Item, ItemType, GameSettings, EnemyType, FloatingText, GameStats, PlayerUpgrades } from '../types';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, PLAYER_SPEED, PLAYER_RADIUS, PLAYER_MAX_HP, WEAPON_STATS, ENEMY_STATS, ITEM_STATS, DIFFICULTY_MODIFIERS, BOSS_STATS, UPGRADE_CONFIG } from '../constants';
+import { LevelConfig, Entity, Bullet, Particle, WeaponType, Item, ItemType, GameSettings, EnemyType, FloatingText, GameStats, PlayerUpgrades, GameMode } from '../types';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, PLAYER_SPEED, PLAYER_RADIUS, PLAYER_MAX_HP, WEAPON_STATS, ENEMY_STATS, ITEM_STATS, DIFFICULTY_MODIFIERS, BOSS_STATS, UPGRADE_CONFIG, TIME_ATTACK_LIMIT } from '../constants';
 import { soundSystem } from '../services/SoundSystem';
-import { Zap, Heart, Radiation, Skull, Shield, Crosshair } from 'lucide-react';
+import { Zap, Heart, Radiation, Skull, Shield, Crosshair, Clock, Snowflake } from 'lucide-react';
 
 interface GameEngineProps {
   level: LevelConfig;
   settings: GameSettings;
   upgrades: PlayerUpgrades;
+  gameMode: GameMode;
   onGameOver: (stats: GameStats, reason: 'victory' | 'defeat') => void;
 }
 
@@ -17,12 +19,13 @@ interface AmmoState {
 
 const TOTAL_WAVES = 5;
 
-const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGameOver }) => {
+const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, gameMode, onGameOver }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
   const unlockedWeapons = [WeaponType.PISTOL];
-  if (level.id >= 2) unlockedWeapons.push(WeaponType.SHOTGUN);
-  if (level.id >= 3) unlockedWeapons.push(WeaponType.FLAMETHROWER);
+  // In Endless/Time Attack, unlock all weapons from start? Or progressive? Let's stick to level logic for now, but endless mode needs upgrades
+  if (level.id >= 2 || gameMode === GameMode.ENDLESS || gameMode === GameMode.TIME_ATTACK) unlockedWeapons.push(WeaponType.SHOTGUN);
+  if (level.id >= 3 || gameMode === GameMode.ENDLESS || gameMode === GameMode.TIME_ATTACK) unlockedWeapons.push(WeaponType.FLAMETHROWER);
 
   const diffMod = DIFFICULTY_MODIFIERS[settings.difficulty];
 
@@ -51,7 +54,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
   
   // Stats Tracking
   const statsRef = useRef<GameStats>({
-    kills: 0, shotsFired: 0, shotsHit: 0, damageTaken: 0, maxCombo: 0, score: 0, timeElapsed: 0
+    kills: 0, shotsFired: 0, shotsHit: 0, damageTaken: 0, maxCombo: 0, score: 0, timeElapsed: 0, weaponsUsed: [WeaponType.PISTOL], waveReached: 1
   });
   const scoreRef = useRef(0);
   const comboRef = useRef({ count: 0, timer: 0 });
@@ -68,11 +71,13 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
   const rapidFireTimerRef = useRef<number>(0);
   const doublePointsTimerRef = useRef<number>(0);
   const shieldTimerRef = useRef<number>(0);
+  const freezeTimerRef = useRef<number>(0);
   
   const waveRef = useRef<number>(1);
   const enemiesToSpawnRef = useRef<number>(0);
   const waveStateRef = useRef<'SPAWNING' | 'CLEARING' | 'INTERMISSION'>('INTERMISSION');
   const intermissionTimerRef = useRef<number>(180); 
+  const timeAttackTimerRef = useRef<number>(TIME_ATTACK_LIMIT * 60); // Frames
   
   const currentWeaponRef = useRef<WeaponType>(WeaponType.PISTOL);
   const ammoRef = useRef<AmmoState>({
@@ -88,6 +93,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
   const [waveStateUI, setWaveStateUI] = useState<'SPAWNING' | 'CLEARING' | 'INTERMISSION'>('INTERMISSION');
   const [intermissionTimeUI, setIntermissionTimeUI] = useState(3);
   const [isPaused, setIsPaused] = useState(false);
+  const [timeAttackTime, setTimeAttackTime] = useState(TIME_ATTACK_LIMIT);
   
   // HUD
   const [weapon, setWeapon] = useState<WeaponType>(WeaponType.PISTOL);
@@ -98,14 +104,21 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
   const [activePowerups, setActivePowerups] = useState<string[]>([]);
 
   const getWaveEnemyCount = (waveIdx: number) => {
+    if (gameMode === GameMode.ENDLESS) {
+       return Math.ceil(10 + waveIdx * 4);
+    }
     return Math.ceil(level.baseEnemyCount * 0.5) + (waveIdx * 3);
   };
   
   useEffect(() => {
     enemiesToSpawnRef.current = getWaveEnemyCount(1);
+    if (gameMode === GameMode.TIME_ATTACK) {
+       waveStateRef.current = 'SPAWNING'; // Start immediately
+       enemiesToSpawnRef.current = 999999; // Infinite spawn pool
+    }
     soundSystem.startMusic();
     return () => soundSystem.stopMusic();
-  }, []);
+  }, [gameMode, level.baseEnemyCount]);
 
   const spawnFloatingText = (x: number, y: number, text: string, color: string, size = 16) => {
     floatingTextsRef.current.push({
@@ -183,18 +196,20 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
       }
 
       if (!isPaused) {
-        if (e.key === '1' && unlockedWeapons.includes(WeaponType.PISTOL)) {
-          currentWeaponRef.current = WeaponType.PISTOL;
-          reloadTimerRef.current = 0; 
-        }
-        if (e.key === '2' && unlockedWeapons.includes(WeaponType.SHOTGUN)) {
-          currentWeaponRef.current = WeaponType.SHOTGUN;
-          reloadTimerRef.current = 0;
-        }
-        if (e.key === '3' && unlockedWeapons.includes(WeaponType.FLAMETHROWER)) {
-          currentWeaponRef.current = WeaponType.FLAMETHROWER;
-          reloadTimerRef.current = 0;
-        }
+        const switchWeapon = (w: WeaponType) => {
+           if (unlockedWeapons.includes(w)) {
+             currentWeaponRef.current = w;
+             reloadTimerRef.current = 0;
+             if (!statsRef.current.weaponsUsed.includes(w)) {
+               statsRef.current.weaponsUsed.push(w);
+             }
+           }
+        };
+
+        if (e.key === '1') switchWeapon(WeaponType.PISTOL);
+        if (e.key === '2') switchWeapon(WeaponType.SHOTGUN);
+        if (e.key === '3') switchWeapon(WeaponType.FLAMETHROWER);
+        
         if (settings.keys.reload.includes(e.code)) {
           reloadWeapon();
         }
@@ -234,7 +249,14 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
 
       statsRef.current.timeElapsed += 1;
 
-      // --- LOGIC ---
+      // Game Mode specific End Conditions
+      if (gameMode === GameMode.TIME_ATTACK) {
+         timeAttackTimerRef.current--;
+         if (timeAttackTimerRef.current <= 0) {
+            onGameOver(statsRef.current, 'victory'); // Time attack "win" when time runs out
+            return;
+         }
+      }
 
       // Combo Decay
       if (comboRef.current.count > 0) {
@@ -250,7 +272,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
          setIntermissionTimeUI(Math.ceil(intermissionTimerRef.current / 60));
          if (intermissionTimerRef.current <= 0) {
             waveStateRef.current = 'SPAWNING';
-            if (level.id === 3 && waveRef.current === 5) {
+            if (gameMode === GameMode.CAMPAIGN && level.id === 3 && waveRef.current === 5) {
                // BOSS WAVE
                enemiesToSpawnRef.current = 1; 
                soundSystem.playBossRoar();
@@ -260,13 +282,14 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
             }
          }
       } else if (waveStateRef.current === 'SPAWNING') {
-         if (enemiesToSpawnRef.current <= 0) {
+         if (enemiesToSpawnRef.current <= 0 && gameMode !== GameMode.TIME_ATTACK) {
             waveStateRef.current = 'CLEARING';
          }
       } else if (waveStateRef.current === 'CLEARING') {
          if (enemiesRef.current.length === 0) {
-            if (waveRef.current < TOTAL_WAVES) {
+            if (gameMode === GameMode.ENDLESS || waveRef.current < TOTAL_WAVES) {
                waveRef.current++;
+               statsRef.current.waveReached = waveRef.current;
                waveStateRef.current = 'INTERMISSION';
                intermissionTimerRef.current = 180;
             } else {
@@ -290,7 +313,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
         if (shakeRef.current < 0.5) shakeRef.current = 0;
       }
 
-      // Player
+      // Player Movement
       let dx = 0;
       let dy = 0;
       const k = keysRef.current;
@@ -316,6 +339,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
       if (rapidFireTimerRef.current > 0) rapidFireTimerRef.current--;
       if (doublePointsTimerRef.current > 0) doublePointsTimerRef.current--;
       if (shieldTimerRef.current > 0) shieldTimerRef.current--;
+      if (freezeTimerRef.current > 0) freezeTimerRef.current--;
 
       // Reload
       if (reloadTimerRef.current > 0) {
@@ -390,15 +414,27 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
       // Spawning
       if (waveStateRef.current === 'SPAWNING' && enemiesToSpawnRef.current > 0) {
         spawnTimerRef.current++;
-        const currentSpawnRate = Math.max(30, level.spawnRate - (waveRef.current * 5));
-        
+        let currentSpawnRate = Math.max(30, level.spawnRate - (waveRef.current * 5));
+        if (gameMode === GameMode.TIME_ATTACK) currentSpawnRate = 40; // Fast fixed spawn
+
         if (spawnTimerRef.current > currentSpawnRate) {
           spawnTimerRef.current = 0;
-          enemiesToSpawnRef.current--;
+          if (gameMode !== GameMode.TIME_ATTACK) enemiesToSpawnRef.current--;
           
           // Boss Spawn
-          const isBoss = level.id === 3 && waveRef.current === 5;
-          const type = isBoss ? EnemyType.BOSS : level.enemyTypes[Math.floor(Math.random() * level.enemyTypes.length)];
+          const isBoss = gameMode === GameMode.CAMPAIGN && level.id === 3 && waveRef.current === 5;
+          let type = EnemyType.NORMAL;
+          
+          if (isBoss) {
+             type = EnemyType.BOSS;
+          } else {
+             // Random weighted spawn logic
+             const r = Math.random();
+             const types = level.enemyTypes;
+             if (types.includes(EnemyType.MUMMY) && r > 0.9) type = EnemyType.MUMMY;
+             else if (types.includes(EnemyType.RED) && r > 0.7) type = EnemyType.RED;
+          }
+
           const stats = ENEMY_STATS[type];
 
           const edge = Math.floor(Math.random() * 4);
@@ -408,6 +444,10 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
           else if (edge === 2) { ex = Math.random() * CANVAS_WIDTH; ey = CANVAS_HEIGHT + 50; }
           else { ex = -50; ey = Math.random() * CANVAS_HEIGHT; }
 
+          // Scale hp with wave in Endless
+          let hpMultiplier = diffMod.hp;
+          if (gameMode === GameMode.ENDLESS) hpMultiplier += (waveRef.current * 0.2);
+
           enemiesRef.current.push({
             id: Math.random().toString(),
             x: ex, y: ey,
@@ -416,18 +456,23 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
             color: stats.color,
             speed: stats.speed * diffMod.speed,
             angle: 0,
-            hp: stats.hp * diffMod.hp,
-            maxHp: stats.hp * diffMod.hp
+            hp: stats.hp * hpMultiplier,
+            maxHp: stats.hp * hpMultiplier
           });
         }
       }
 
-      // Enemies
+      // Enemies Update
       enemiesRef.current.forEach(enemy => {
-        const angle = Math.atan2(playerRef.current.y - enemy.y, playerRef.current.x - enemy.x);
-        enemy.x += Math.cos(angle) * enemy.speed;
-        enemy.y += Math.sin(angle) * enemy.speed;
-        enemy.angle = angle;
+        // Freeze effect
+        if (freezeTimerRef.current > 0 && enemy.type !== EnemyType.BOSS) {
+           // Don't update position
+        } else {
+           const angle = Math.atan2(playerRef.current.y - enemy.y, playerRef.current.x - enemy.x);
+           enemy.x += Math.cos(angle) * enemy.speed;
+           enemy.y += Math.sin(angle) * enemy.speed;
+           enemy.angle = angle;
+        }
 
         // Boss specific logic
         if (enemy.type === EnemyType.BOSS) {
@@ -559,6 +604,9 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
            } else if (item.type === ItemType.SHIELD) {
              shieldTimerRef.current = stats.duration!;
              soundSystem.playPickup('powerup');
+           } else if (item.type === ItemType.FREEZE) {
+             freezeTimerRef.current = stats.duration!;
+             soundSystem.playFreeze();
            }
            
            scoreRef.current += stats.score || 0;
@@ -613,9 +661,9 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
            ctx.fillStyle = 'black'; ctx.font = '30px Arial'; ctx.textAlign='center'; ctx.textBaseline='middle';
            ctx.fillText('☠', 0, 0);
         } else {
-           ctx.fillStyle = enemy.color;
+           ctx.fillStyle = freezeTimerRef.current > 0 ? '#06b6d4' : enemy.color;
            ctx.beginPath(); ctx.arc(0, 0, enemy.radius, 0, Math.PI * 2); ctx.fill();
-           ctx.fillStyle = enemy.color; 
+           ctx.fillStyle = freezeTimerRef.current > 0 ? '#06b6d4' : enemy.color; 
            ctx.fillRect(0, -enemy.radius, enemy.radius + 5, 8); 
            ctx.fillRect(0, enemy.radius - 8, enemy.radius + 5, 8);
         }
@@ -681,6 +729,45 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
          ctx.restore();
       });
 
+      // MINIMAP
+      const mapSize = 120;
+      const mapPadding = 20;
+      const mapX = CANVAS_WIDTH - mapSize - mapPadding;
+      const mapY = mapPadding;
+      
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 20, 0, 0.7)';
+      ctx.strokeStyle = '#4ade80';
+      ctx.lineWidth = 2;
+      ctx.fillRect(mapX, mapY, mapSize, mapSize);
+      ctx.strokeRect(mapX, mapY, mapSize, mapSize);
+      
+      // Map scale factor
+      const scaleX = mapSize / CANVAS_WIDTH;
+      const scaleY = mapSize / CANVAS_HEIGHT;
+      
+      // Draw Player on Map
+      ctx.fillStyle = '#60a5fa';
+      ctx.beginPath(); 
+      ctx.arc(mapX + playerRef.current.x * scaleX, mapY + playerRef.current.y * scaleY, 3, 0, Math.PI*2); 
+      ctx.fill();
+
+      // Draw Enemies on Map
+      ctx.fillStyle = '#ef4444';
+      enemiesRef.current.forEach(e => {
+         ctx.fillRect(mapX + e.x * scaleX - 1.5, mapY + e.y * scaleY - 1.5, 3, 3);
+      });
+
+      // Draw Items on Map
+      ctx.fillStyle = '#eab308';
+      itemsRef.current.forEach(i => {
+         ctx.beginPath(); 
+         ctx.arc(mapX + i.x * scaleX, mapY + i.y * scaleY, 2, 0, Math.PI*2); 
+         ctx.fill();
+      });
+      
+      ctx.restore();
+
       ctx.restore();
 
       // State Sync
@@ -693,11 +780,13 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
       setReserve(ammoRef.current[currentWeaponRef.current].reserve);
       setIsReloading(reloadTimerRef.current > 0);
       setCombo(comboRef.current.count);
+      setTimeAttackTime(Math.ceil(timeAttackTimerRef.current / 60));
       
       const actives = [];
       if (rapidFireTimerRef.current > 0) actives.push('RAPID');
       if (doublePointsTimerRef.current > 0) actives.push('2X SCORE');
       if (shieldTimerRef.current > 0) actives.push('SHIELD');
+      if (freezeTimerRef.current > 0) actives.push('FREEZE');
       setActivePowerups(actives);
 
       frameRef.current++;
@@ -714,17 +803,26 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
       window.removeEventListener('mouseup', handleMouseUp);
       cancelAnimationFrame(animationFrameId);
     };
-  }, [level, settings, upgrades, onGameOver, isPaused]); 
+  }, [level, settings, upgrades, gameMode, onGameOver, isPaused]); 
 
   return (
     <div className="relative">
        <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="block border-4 border-zinc-800 bg-black rounded shadow-2xl cursor-crosshair mx-auto"/>
        
-       {waveStateUI === 'INTERMISSION' && (
+       {gameMode === GameMode.TIME_ATTACK && (
+         <div className="absolute top-4 left-4 bg-black/60 border border-blue-500 p-3 rounded flex items-center gap-2 animate-pulse">
+           <Clock className="text-blue-400" />
+           <span className={`text-2xl font-bold ${timeAttackTime < 30 ? 'text-red-500' : 'text-white'}`}>
+              {Math.floor(timeAttackTime / 60)}:{(timeAttackTime % 60).toString().padStart(2, '0')}
+           </span>
+         </div>
+       )}
+
+       {waveStateUI === 'INTERMISSION' && gameMode !== GameMode.TIME_ATTACK && (
          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
              <div className="bg-black/70 p-6 rounded text-center border-y-4 border-green-600 w-full backdrop-blur-sm">
                <h3 className="text-4xl font-bold text-green-500 mb-2">WAVE {wave} CLEARED</h3>
-               {level.id === 3 && wave === 4 
+               {gameMode === GameMode.CAMPAIGN && level.id === 3 && wave === 4 
                  ? <p className="text-red-500 text-2xl animate-pulse font-bold">WARNING: MASSIVE SIGNAL DETECTED</p>
                  : <p className="text-white text-xl animate-pulse">NEXT WAVE IN {intermissionTimeUI}...</p>
                }
@@ -762,7 +860,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
              <div className="flex gap-2">
                {activePowerups.map(p => (
                  <div key={p} className="text-blue-400 text-xs flex items-center gap-1 animate-pulse border border-blue-500 bg-blue-900/30 px-2 rounded">
-                   <Zap size={10} /> {p}
+                   {p === 'FREEZE' ? <Snowflake size={10} /> : <Zap size={10} />} {p}
                  </div>
                ))}
              </div>
@@ -770,7 +868,7 @@ const GameEngine: React.FC<GameEngineProps> = ({ level, settings, upgrades, onGa
 
           <div className="flex flex-col items-end bg-black/50 p-2 rounded border border-zinc-700 w-48">
              <span className="text-blue-400">SCORE: {score.toString().padStart(6, '0')}</span>
-             <span className="text-yellow-400 text-sm flex items-center gap-1"><Radiation size={14} /> WAVE {wave}/{TOTAL_WAVES}</span>
+             <span className="text-yellow-400 text-sm flex items-center gap-1"><Radiation size={14} /> WAVE {wave}{gameMode === GameMode.ENDLESS ? '' : `/${TOTAL_WAVES}`}</span>
              {combo > 1 && <span className="text-yellow-500 text-lg animate-bounce mt-1 font-black">{combo}x COMBO</span>}
           </div>
        </div>

@@ -7,6 +7,12 @@ export enum GameState {
   VICTORY = 'VICTORY'
 }
 
+export enum GameMode {
+  CAMPAIGN = 'CAMPAIGN',
+  ENDLESS = 'ENDLESS',
+  TIME_ATTACK = 'TIME_ATTACK'
+}
+
 export enum WeaponType {
   PISTOL = 'Pistol',
   SHOTGUN = 'Shotgun',
@@ -26,7 +32,8 @@ export enum ItemType {
   RAPID_FIRE = 'RAPID_FIRE',
   AMMO = 'AMMO',
   DOUBLE_POINTS = 'DOUBLE_POINTS',
-  SHIELD = 'SHIELD'
+  SHIELD = 'SHIELD',
+  FREEZE = 'FREEZE'
 }
 
 export enum Difficulty {
@@ -110,6 +117,8 @@ export interface GameStats {
   maxCombo: number;
   score: number;
   timeElapsed: number;
+  weaponsUsed: WeaponType[];
+  waveReached: number;
 }
 
 export interface PlayerUpgrades {
@@ -133,4 +142,11 @@ export interface GameSettings {
   difficulty: Difficulty;
   particles: 'LOW' | 'MEDIUM' | 'HIGH';
   keys: KeyBindings;
+}
+
+export interface Achievement {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
 }
