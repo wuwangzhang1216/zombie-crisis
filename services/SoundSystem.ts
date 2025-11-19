@@ -51,7 +51,6 @@ class SoundSystem {
     if (!this.ctx || this.musicOscillators.length > 0) return;
     this.init();
     
-    // Create a dark ambient drone
     const createDrone = (freq: number, type: OscillatorType) => {
       if (!this.ctx || !this.musicGain) return;
       const osc = this.ctx.createOscillator();
@@ -60,7 +59,6 @@ class SoundSystem {
       osc.type = type;
       osc.frequency.value = freq;
       
-      // Lowpass filter for muffled dark sound
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'lowpass';
       filter.frequency.value = 200;
@@ -75,10 +73,9 @@ class SoundSystem {
       this.musicOscillators.push(osc);
     };
 
-    createDrone(55, 'sawtooth'); // Low A
-    createDrone(56, 'sine');     // Low A detuned (beating effect)
+    createDrone(55, 'sawtooth'); 
+    createDrone(56, 'sine');     
     
-    // Random eerie high pitched sounds
     this.musicInterval = window.setInterval(() => {
       if (Math.random() > 0.7) {
          this.playAmbientSting();
@@ -174,7 +171,7 @@ class SoundSystem {
       this.playOscillator('sawtooth', 150, 50, 0.2, 0.6);
       this.playNoise(0.15);
     } else if (type === 'flame') {
-      this.playNoise(0.05); // Continuous short bursts loop
+      this.playNoise(0.05);
     }
   }
 
@@ -197,17 +194,34 @@ class SoundSystem {
     this.playOscillator('sawtooth', 50, 20, 0.3, 0.8);
   }
 
-  public playPickup(type: 'health' | 'ammo' | 'nuke') {
+  public playPickup(type: 'health' | 'ammo' | 'nuke' | 'powerup') {
     if (type === 'health') {
       this.playOscillator('sine', 400, 600, 0.1, 0.5);
       setTimeout(() => this.playOscillator('sine', 600, 800, 0.1, 0.5), 100);
     } else if (type === 'nuke') {
       this.playNoise(1.5);
       this.playOscillator('sawtooth', 50, 10, 1.5, 0.5);
+    } else if (type === 'powerup') {
+       this.playOscillator('sine', 300, 600, 0.3, 0.4);
+       setTimeout(() => this.playOscillator('sine', 600, 1200, 0.3, 0.4), 100);
     } else {
-      // Ammo / Rapid Fire
       this.playOscillator('square', 800, 1200, 0.15, 0.4);
     }
+  }
+
+  public playBossRoar() {
+    this.playOscillator('sawtooth', 100, 20, 1.5, 0.8);
+    this.playNoise(2.0);
+  }
+
+  public playCombo(count: number) {
+    const baseFreq = 400 + (count * 50);
+    this.playOscillator('sine', baseFreq, baseFreq * 1.5, 0.2, 0.4);
+  }
+
+  public playCash() {
+    this.playOscillator('square', 800, 1200, 0.1, 0.3);
+    setTimeout(() => this.playOscillator('square', 1200, 1600, 0.1, 0.3), 100);
   }
 }
 

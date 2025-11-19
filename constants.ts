@@ -45,8 +45,8 @@ export const WEAPON_STATS = {
     spread: 0, 
     color: '#fbbf24',
     clipSize: 12,
-    reloadTime: 60, // 1 second
-    maxReserve: 999 // Infinite
+    reloadTime: 60, 
+    maxReserve: 999 
   },
   [WeaponType.SHOTGUN]: { 
     damage: 15, 
@@ -56,7 +56,7 @@ export const WEAPON_STATS = {
     count: 5, 
     color: '#f87171',
     clipSize: 6,
-    reloadTime: 120, // 2 seconds
+    reloadTime: 120, 
     maxReserve: 32
   },
   [WeaponType.FLAMETHROWER]: { 
@@ -67,7 +67,7 @@ export const WEAPON_STATS = {
     duration: 20, 
     color: '#f97316',
     clipSize: 100,
-    reloadTime: 180, // 3 seconds
+    reloadTime: 180, 
     maxReserve: 400
   }
 };
@@ -75,19 +75,30 @@ export const WEAPON_STATS = {
 export const ENEMY_STATS = {
   [EnemyType.NORMAL]: { hp: 50, speed: 1.5, color: '#4ade80', score: 100, radius: 15 },
   [EnemyType.RED]: { hp: 30, speed: 4.0, color: '#ef4444', score: 200, radius: 12 },
-  [EnemyType.MUMMY]: { hp: 200, speed: 0.8, color: '#fde047', score: 500, radius: 20 }
+  [EnemyType.MUMMY]: { hp: 200, speed: 0.8, color: '#fde047', score: 500, radius: 20 },
+  [EnemyType.BOSS]: { hp: 3000, speed: 1.2, color: '#7f1d1d', score: 5000, radius: 45 }
 };
 
+export const BOSS_STATS = ENEMY_STATS[EnemyType.BOSS];
+
 export const ITEM_STATS = {
-  [ItemType.MEDKIT]: { color: '#22c55e', radius: 12, heal: 30, score: 0, chance: 0.05, symbol: '+' },
+  [ItemType.MEDKIT]: { color: '#22c55e', radius: 12, heal: 30, score: 0, chance: 0.03, symbol: '+' },
   [ItemType.NUKE]: { color: '#f59e0b', radius: 12, heal: 0, score: 1000, chance: 0.01, symbol: '☢' },
-  [ItemType.RAPID_FIRE]: { color: '#3b82f6', radius: 12, heal: 0, score: 0, chance: 0.04, duration: 300, symbol: '⚡' },
-  [ItemType.AMMO]: { color: '#a8a29e', radius: 12, heal: 0, score: 0, chance: 0.1, symbol: '▮' }
+  [ItemType.RAPID_FIRE]: { color: '#3b82f6', radius: 12, heal: 0, score: 0, chance: 0.03, duration: 300, symbol: '⚡' },
+  [ItemType.AMMO]: { color: '#a8a29e', radius: 12, heal: 0, score: 0, chance: 0.08, symbol: '▮' },
+  [ItemType.DOUBLE_POINTS]: { color: '#eab308', radius: 12, heal: 0, score: 0, chance: 0.02, duration: 600, symbol: '2x' },
+  [ItemType.SHIELD]: { color: '#8b5cf6', radius: 12, heal: 0, score: 0, chance: 0.02, duration: 300, symbol: '🛡️' }
 };
 
 export const PLAYER_SPEED = 3.5;
 export const PLAYER_RADIUS = 12;
 export const PLAYER_MAX_HP = 100;
+
+export const UPGRADE_CONFIG = {
+  health: { baseCost: 500, costMult: 1.5, maxLevel: 5, valuePerLevel: 20, name: "Nanite Armor" }, 
+  speed: { baseCost: 500, costMult: 1.5, maxLevel: 5, valuePerLevel: 0.2, name: "Hydraulic Legs" }, 
+  damage: { baseCost: 1000, costMult: 1.5, maxLevel: 5, valuePerLevel: 0.1, name: "High-Caliber Rounds" }, 
+};
 
 export const DEFAULT_SETTINGS: GameSettings = {
   masterVolume: 0.5,

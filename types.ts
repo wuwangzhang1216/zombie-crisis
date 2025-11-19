@@ -16,14 +16,17 @@ export enum WeaponType {
 export enum EnemyType {
   NORMAL = 'NORMAL',
   RED = 'RED',
-  MUMMY = 'MUMMY'
+  MUMMY = 'MUMMY',
+  BOSS = 'BOSS'
 }
 
 export enum ItemType {
   MEDKIT = 'MEDKIT',
   NUKE = 'NUKE',
   RAPID_FIRE = 'RAPID_FIRE',
-  AMMO = 'AMMO'
+  AMMO = 'AMMO',
+  DOUBLE_POINTS = 'DOUBLE_POINTS',
+  SHIELD = 'SHIELD'
 }
 
 export enum Difficulty {
@@ -36,8 +39,8 @@ export interface LevelConfig {
   id: number;
   name: string;
   description: string;
-  baseEnemyCount: number; // Renamed from enemyCount to imply scaling
-  spawnRate: number; // frames between spawns
+  baseEnemyCount: number; 
+  spawnRate: number; 
   enemyTypes: EnemyType[];
   unlockedWeapon: WeaponType;
   background: string;
@@ -65,7 +68,7 @@ export interface Bullet {
   damage: number;
   color: string;
   radius: number;
-  duration: number; // for flamethrower
+  duration: number; 
 }
 
 export interface Particle {
@@ -84,8 +87,35 @@ export interface Item {
   x: number;
   y: number;
   type: ItemType;
-  life: number; // Despawn timer
-  angle: number; // For floating animation
+  life: number; 
+  angle: number; 
+}
+
+export interface FloatingText {
+  id: string;
+  x: number;
+  y: number;
+  text: string;
+  color: string;
+  life: number;
+  vy: number;
+  size: number;
+}
+
+export interface GameStats {
+  kills: number;
+  shotsFired: number;
+  shotsHit: number;
+  damageTaken: number;
+  maxCombo: number;
+  score: number;
+  timeElapsed: number;
+}
+
+export interface PlayerUpgrades {
+  health: number;
+  speed: number;
+  damage: number;
 }
 
 export interface KeyBindings {
